@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native'
-import { navigationRef } from '../navigation/navigationRef'
 import { useTheme } from '../theme/theme'
 
 const SCREEN_WIDTH = Dimensions.get('window').width
@@ -20,7 +19,7 @@ interface FloatingOverlayProps {
 
 export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
   const { colors } = useTheme()
-  const navigation = useNavigation<any>()
+  const nav = useNavigation<any>()
 
   const buttons: { icon: string; label: string; screen: 'Journal' | 'Log' | 'Fasting' }[] = [
     { icon: 'timer', label: 'Fasting', screen: 'Fasting' },
@@ -43,7 +42,7 @@ export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
               ]}
               onPress={() => {
                 onClose()
-                navigationRef.current?.navigate('Dashboard', {screen:screen})
+                nav.navigate(screen as never)
               }}
             >
               <Ionicons name={icon as any} size={24} color={colors.textPrimary} />
