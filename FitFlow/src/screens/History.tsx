@@ -6,11 +6,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
+  Alert
 } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import { MaterialIcons, Ionicons } from '@expo/vector-icons'
 import { supabase, getEntries } from '../lib/api'
+import { LinearGradient } from 'expo-linear-gradient'
 
 type Entry = {
   id: number
@@ -50,8 +51,8 @@ export default function History() {
           } else {
             setEntries(prev => prev.filter(e => e.id !== id))
           }
-        },
-      },
+        }
+      }
     ])
   }
 
@@ -62,21 +63,24 @@ export default function History() {
   const gym = entries.filter(e => e.type === 'Gym')
   const other = entries.filter(e => e.type !== 'Gym')
 
+  const thisMonth = new Date().toLocaleString('en-US', { month: 'long' })
+  const thisMonthEntries = entries.filter(entry =>
+    new Date(entry.date).getMonth() === new Date().getMonth()
+  )
+
   const renderEntry = (entry: Entry) => {
     const badgeColor =
       {
-        Gym:   '#7F00FF',
-        Run:   '#7ADB78',
-        Swim:  '#5DA5FF',
-        Cycle: '#FFC300',
-      }[entry.type] ?? '#858DFF'
+        Gym: '#AC6AFF',
+        Run: '#43E97B',
+        Swim: '#5DA5FF',
+        Cycle: '#FFC300'
+      }[entry.type] ?? '#AAA'
 
     return (
-      <View key={entry.id} style={styles.card}>
+      <View key={entry.id} style={styles.whiteCard}>
         <View style={styles.cardHeader}>
-          <Text style={styles.date}>
-            {new Date(entry.date).toLocaleDateString('en-GB')}
-          </Text>
+          <Text style={styles.date}>{new Date(entry.date).toLocaleDateString('en-GB')}</Text>
           <View style={[styles.badge, { backgroundColor: badgeColor }]}>
             <Text style={styles.badgeText}>{entry.type}</Text>
           </View>
@@ -105,11 +109,11 @@ export default function History() {
         ) : null}
 
         <View style={styles.actions}>
-          <TouchableOpacity onPress={() => handleEdit(entry)}>
-            <Ionicons name="pencil-outline" size={20} color="#CAC6DD" />
+          <TouchableOpacity onPress={() => handleEdit(entry)} style={{ marginRight: 12 }}>
+            <Ionicons name="pencil-outline" size={20} color="#888" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => handleDelete(entry.id)}>
-            <MaterialIcons name="delete-outline" size={20} color="#F66" />
+            <MaterialIcons name="delete-outline" size={20} color="#D33" />
           </TouchableOpacity>
         </View>
       </View>
@@ -118,86 +122,165 @@ export default function History() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, { backgroundColor: '#FDFCF9' }]}>
         <Text style={styles.empty}>Loading…</Text>
       </View>
     )
   }
 
   return (
-    <View style={styles.screen}>
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>History</Text>
+    <View style={[styles.screen, { backgroundColor: '#FDFCF9' }]}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <LinearGradient
+          colors={['#1A1A1A', '#2A2A2A']}
+          style={styles.insightsCard}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <View>
+            <Text style={styles.insightsTitle}>{thisMonth}{'\n'}Insights</Text>
+            <Text style={styles.insightsCountLabel}>Entries</Text>
+            <Text style={styles.insightsCountValue}>{thisMonthEntries.length}</Text>
+          </View>
+          <TouchableOpacity style={styles.insightsAction}>
+            <Text style={styles.insightsSeeAll}>See All {'>'}</Text>
+          </TouchableOpacity>
+        </LinearGradient>
 
-      <Text style={styles.sectionTitle}>🏋️ Gym Workouts</Text>
-      {gym.length
-        ? gym.map(renderEntry)
-        : <Text style={styles.empty}>No gym workouts logged.</Text>
-      }
+        <Text style={styles.title}>History</Text>
 
-      <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
-        🎽 Other Activities
-      </Text>
-      {other.length
-        ? other.map(renderEntry)
-        : <Text style={styles.empty}>No other activities logged.</Text>
-      }
-    </ScrollView></View>
+        <Text style={styles.sectionTitle}>🏋️ Gym Workouts</Text>
+        {gym.length
+          ? gym.map(renderEntry)
+          : <Text style={styles.empty}>No gym workouts logged.</Text>
+        }
+
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
+          🎽 Other Activities
+        </Text>
+        {other.length
+          ? other.map(renderEntry)
+          : <Text style={styles.empty}>No other activities logged.</Text>
+        }
+      </ScrollView>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
-    screen: {
-    flex: 1,
-    backgroundColor: '#0E0C15',
+  screen: {
+    flex: 1
   },
   container: {
     padding: 16,
     paddingTop: 70,
-    backgroundColor: '#0E0C15',
-    paddingBottom: 32,
+    paddingBottom: 100
   },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#AC6AFF',
-    marginBottom: 16,
+    color: '#1A1A1A',
+    marginBottom: 16
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 12,
+    color: '#1A1A1A',
+    marginBottom: 12
   },
-  card: {
-    backgroundColor: '#2E2A41',
-    borderRadius: 12,
+  insightsCard: {
+    borderRadius: 24,
+    padding: 24,
+    marginBottom: 24,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  insightsTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 12
+  },
+  insightsCountLabel: {
+    fontSize: 14,
+    color: '#ccc'
+  },
+  insightsCountValue: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#fff'
+  },
+  insightsAction: {
+    position: 'absolute',
+    top: 20,
+    right: 24
+  },
+  insightsSeeAll: {
+    color: '#ccc',
+    fontSize: 14,
+    fontWeight: '500'
+  },
+  whiteCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
     padding: 16,
     marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 8
   },
-  date: { color: '#CAC6DD', fontSize: 14 },
+  date: {
+    color: '#333',
+    fontSize: 14
+  },
   badge: {
     borderRadius: 12,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 2
   },
-  badgeText: { color: '#FFF', fontSize: 12, fontWeight: '600' },
-  section: { marginBottom: 8 },
-  line: { color: '#ADA8C3', fontSize: 14, marginBottom: 4 },
-  bold: { color: '#FFFFFF', fontWeight: '600' },
-  notes: { fontStyle: 'italic', color: '#757185', marginTop: 4 },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  section: {
+    marginBottom: 8
+  },
+  line: {
+    color: '#444',
+    fontSize: 14,
+    marginBottom: 4
+  },
+  bold: {
+    fontWeight: '600',
+    color: '#1A1A1A'
+  },
+  notes: {
+    fontStyle: 'italic',
+    color: '#777',
+    marginTop: 4
+  },
   actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    marginTop: 12,
-    spaceX: 16,
+    marginTop: 12
   },
-  empty: { color: '#ADA8C3', textAlign: 'center', marginBottom: 12 },
+  empty: {
+    color: '#999',
+    textAlign: 'center',
+    marginBottom: 12
+  }
 })

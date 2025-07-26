@@ -1,3 +1,4 @@
+// SmartWorkout.tsx
 import React, { useEffect, useState } from 'react'
 import {
   View,
@@ -7,17 +8,26 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  Animated,
+  Easing
 } from 'react-native'
+import { LinearGradient } from 'expo-linear-gradient'
 import { useNavigation } from '@react-navigation/native'
 import { format, parseISO } from 'date-fns'
 import {
   generateWorkout,
   generateSchedule,
-  generateNutrition,
+  generateNutrition
 } from '../lib/api'
 
 type Workout = { warmUp: string[]; mainSet: string[]; coolDown: string[] }
-type ScheduleDay = { date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }
+type ScheduleDay = {
+  date: string
+  warmUp: string[]
+  mainSet: string[]
+  coolDown: string[]
+  done?: boolean
+}
 type NutritionPlan = {
   breakfast?: { name: string; protein_g: number; fat_g: number; carbs_g: number; notes: string }[]
   lunch?: { name: string; protein_g: number; fat_g: number; carbs_g: number; notes: string }[]
@@ -36,32 +46,35 @@ export default function SmartWorkout() {
   const [workout, setWorkout] = useState<Workout | null>(null)
   const [schedule, setSchedule] = useState<ScheduleDay[]>([])
   const [nutrition, setNutrition] = useState<NutritionPlan | null>(null)
+  const [fadeAnim] = useState(new Animated.Value(0))
   const navigation = useNavigation()
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: true
+    }).start()
+  }, [view])
 
   function sectionHeader() {
     switch (view) {
-      case 'Workout':
-        return '🏋️ Quick Workout'
-      case 'Schedule':
-        return '📅 Schedule Planner'
-      case 'Nutrition':
-        return '🥗 Nutrition Suggestions'
+      case 'Workout': return '🏋️ Quick Workout'
+      case 'Schedule': return '📅 Schedule Planner'
+      case 'Nutrition': return '🥗 Nutrition Suggestions'
     }
   }
 
-//   useEffect(() => {
-//   generateWorkout('15 minute full-body workout').then(console.log).catch(console.error);
-// }, []);
-
-  // helper to import into Log screen
   function importToLog(day: ScheduleDay, exercise?: string) {
     const entry: any = {
       date: day.date,
       type: day.mainSet.length ? 'Gym' : 'Run',
       notes: exercise || day.mainSet.join(', '),
       exercises: [],
-      segments: [],
+      segments: []
     }
+
     if (exercise) {
       const [name, rest = ''] = exercise.split(':')
       const sets = rest.match(/(\d+)×/)?.[1] || ''
@@ -75,6 +88,7 @@ export default function SmartWorkout() {
         return { name: name.trim(), sets, reps, weight: '' }
       })
     }
+
     navigation.navigate('Log' as never, { entry } as never)
   }
 
@@ -82,16 +96,9 @@ export default function SmartWorkout() {
     if (!prompt.trim()) return
     setLoading(true)
     try {
-      if (view === 'Workout') {
-        const w = await generateWorkout(prompt)
-        setWorkout(w)
-      } else if (view === 'Schedule') {
-        const s = await generateSchedule(prompt)
-        setSchedule(s)
-      } else {
-        const n = await generateNutrition(prompt)
-        setNutrition(n)
-      }
+      if (view === 'Workout') setWorkout(await generateWorkout(prompt))
+      else if (view === 'Schedule') setSchedule(await generateSchedule(prompt))
+      else setNutrition(await generateNutrition(prompt))
     } catch {
       setError('Could not generate—try again.')
     } finally {
@@ -113,6 +120,7 @@ export default function SmartWorkout() {
                 setWorkout(null)
                 setSchedule([])
                 setNutrition(null)
+                fadeAnim.setValue(0)
               }}
               style={[styles.tab, view === t && styles.tabActive]}
             >
@@ -125,156 +133,117 @@ export default function SmartWorkout() {
 
         <TextInput
           style={styles.input}
-          placeholder={`Enter ${view} prompt…`}
-          placeholderTextColor="#757185"
+          placeholder={`Enter ${view.toLowerCase()} prompt…`}
+          placeholderTextColor="#999"
           value={prompt}
           onChangeText={setPrompt}
         />
 
-        <TouchableOpacity onPress={handleSubmit} style={styles.submitButton} disabled={loading}>
-          {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitText}>Go</Text>}
+        <TouchableOpacity onPress={handleSubmit} disabled={loading}>
+          <LinearGradient
+            colors={['#000000', '#3f3cbb']}
+            start={{ x: 1, y: 0 }}
+            end={{ x: 0, y: 0 }}
+            style={styles.gradientButton}
+          >
+            {loading ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitText}>Generate</Text>}
+          </LinearGradient>
         </TouchableOpacity>
+
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        {/* Workout Results */}
-        {view === 'Workout' && workout && (
-          <View style={styles.result}>
-            {(['warmUp', 'mainSet', 'coolDown'] as const).map(section => (
-              <View key={section} style={styles.sectionGroup}>
-                <Text style={styles.subHeader}>
-                  {section === 'warmUp'
-                    ? 'Warm-Up'
-                    : section === 'mainSet'
-                    ? 'Main Set'
-                    : 'Cool-Down'}
-                </Text>
-                {workout[section].map((item, i) => (
-                  <View key={i} style={styles.lineRow}>
-                    <Text style={styles.lineText}>• {item}</Text>
-                    {section === 'mainSet' && (
-                      <TouchableOpacity onPress={() => importToLog({ date: format(new Date(), 'yyyy-MM-dd'), warmUp: [], mainSet: [item], coolDown: [] }, item)}>
-                        <Text style={styles.importLink}>Import</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-                {section === 'mainSet' && workout.mainSet.length > 0 && (
-                  <TouchableOpacity
-                    onPress={() => importToLog(
-                      { date: format(new Date(), 'yyyy-MM-dd'), warmUp: [], mainSet: workout.mainSet, coolDown: [] }
-                    )}
-                  >
-                    <Text style={styles.importLink}>Import All</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ))}
-          </View>
-        )}
+        <Animated.View style={{ opacity: fadeAnim }}>
+          {workout && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultTitle}>Warm-up</Text>
+              {workout.warmUp.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+              <Text style={styles.resultTitle}>Main Set</Text>
+              {workout.mainSet.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+              <Text style={styles.resultTitle}>Cool Down</Text>
+              {workout.coolDown.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+            </View>
+          )}
 
-        {/* Schedule Results */}
-        {view === 'Schedule' && schedule.length > 0 && (
-          <View>
-            {schedule.map((day, i) => (
-              <View key={i} style={[styles.card, day.done && { opacity: 0.5 }]}>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.cardDate}>{format(parseISO(day.date), 'dd/MM/yy')}</Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      const upd = [...schedule]
-                      upd[i].done = !upd[i].done
-                      setSchedule(upd)
-                    }}
-                  >
-                    <Text style={styles.completeLink}>{day.done ? 'Undo' : 'Complete'}</Text>
-                  </TouchableOpacity>
+          {schedule.length > 0 && (
+            <View style={styles.resultCard}>
+              {schedule.map((day, idx) => (
+                <View key={idx} style={styles.scheduleBlock}>
+                  <Text style={styles.resultTitle}>{format(parseISO(day.date), 'EEEE, dd MMM')}</Text>
+                  {day.mainSet.map((ex, i) => (
+                    <Text key={i} style={styles.resultText}>• {ex}</Text>
+                  ))}
                 </View>
-                {(['warmUp', 'mainSet', 'coolDown'] as const).map(sec => (
-                  <View key={sec} style={{ marginBottom: 8 }}>
-                    <Text style={styles.subHeader}>
-                      {sec === 'warmUp'
-                        ? 'Warm-Up'
-                        : sec === 'mainSet'
-                        ? 'Main Set'
-                        : 'Cool-Down'}
-                    </Text>
-                    {day[sec].map((item, j) => (
-                      <View key={j} style={styles.lineRow}>
-                        <Text style={styles.lineText}>• {item}</Text>
-                        {sec === 'mainSet' && (
-                          <TouchableOpacity onPress={() => importToLog(day, item)}>
-                            <Text style={styles.importLink}>Import</Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    ))}
-                  </View>
-                ))}
-              </View>
-            ))}
-          </View>
-        )}
+              ))}
+            </View>
+          )}
 
-        {/* Nutrition Results */}
-        {view === 'Nutrition' && nutrition && (
-          <View style={styles.result}>
-            {nutrition && (
-  (['breakfast','lunch','dinner'] as const).map(meal => {
-    const items = nutrition[meal]
-    if (!Array.isArray(items)) return null
-    return (
-      <View key={meal} style={styles.sectionGroup}>
-        <Text style={styles.subHeader}>
-          {meal.charAt(0).toUpperCase() + meal.slice(1)}
-        </Text>
-        {items.map((m, idx) => (
-          <Text key={idx} style={styles.lineText}>
-            • {m.name} — P:{m.protein_g}g F:{m.fat_g}g C:{m.carbs_g}g{'\n'}
-            <Text style={styles.notes}>{m.notes}</Text>
-          </Text>
-        ))}
-      </View>
-    )
-  })
-)}
-            {Array.isArray(nutrition.ingredients) && (
-  <View style={styles.sectionGroup}>
-    <Text style={styles.subHeader}>🛒 Ingredients</Text>
-    {nutrition.ingredients.map((ing, i) => (
-      <Text key={i} style={styles.lineText}>• {ing}</Text>
-    ))}
-  </View>
-)}
-            {nutrition.answer && <Text style={styles.lineText}>{nutrition.answer}</Text>}
-          </View>
-        )}
+          {nutrition?.answer && (
+            <View style={styles.resultCard}>
+              <Text style={styles.resultTitle}>Summary</Text>
+              <Text style={styles.resultText}>{nutrition.answer}</Text>
+            </View>
+          )}
+        </Animated.View>
       </ScrollView>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0E0C15' },
-  container: { padding: 16, paddingTop: 70, backgroundColor: '#0E0C15', paddingBottom: 32 },
-  tabRow: { flexDirection: 'row', marginBottom: 12 },
-  tab: { flex: 1, padding: 8, alignItems: 'center', borderBottomWidth: 2, borderBottomColor: '#2E2A41' },
-  tabActive: { borderBottomColor: '#AC6AFF' },
-  tabText: { color: '#757185' },
-  tabTextActive: { color: '#FFFFFF', fontWeight: '600' },
-  sectionTitle: { fontSize: 20, fontWeight: '600', color: '#FFFFFF', marginBottom: 12 },
-  input: { backgroundColor: '#2E2A41', borderRadius: 8, padding: 12, color: '#FFFFFF', marginBottom: 12 },
-  submitButton: { backgroundColor: '#AC6AFF', borderRadius: 8, padding: 12, alignItems: 'center', marginBottom: 16 },
-  submitText: { color: '#FFFFFF', fontWeight: '600' },
-  error: { color: '#FF6B6B', marginBottom: 12, textAlign: 'center' },
-  result: { backgroundColor: '#15131D', borderRadius: 8, padding: 12, marginBottom: 24 },
-  sectionGroup: { marginBottom: 12 },
-  subHeader: { fontSize: 18, fontWeight: '600', color: '#FFFFFF', marginBottom: 4 },
-  lineRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  lineText: { color: '#ADA8C3', flex: 1, marginRight: 8 },
-  importLink: { color: '#AC6AFF', fontWeight: '600' },
-  notes: { fontStyle: 'italic', color: '#757185', marginTop: 2 },
-  card: { backgroundColor: '#2E2A41', borderRadius: 12, padding: 12, marginBottom: 16 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between' },
-  cardDate: { color: '#CAC6DD', fontWeight: '600' },
-  completeLink: { color: '#7ADB78', fontWeight: '600' },
+  screen: { flex: 1, backgroundColor: '#FDFCF9' },
+  container: { padding: 16, paddingTop: 70, paddingBottom: 100 },
+  tabRow: { flexDirection: 'row', borderRadius: 12, backgroundColor: '#EFEFEF', marginBottom: 20 },
+  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 12 },
+  tabActive: { backgroundColor: '#1A1A1A' },
+  tabText: { color: '#666', fontWeight: '600' },
+  tabTextActive: { color: '#FFF', fontWeight: '600' },
+  sectionTitle: { fontSize: 22, fontWeight: '700', color: '#1A1A1A', marginBottom: 16 },
+  input: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    color: '#1A1A1A',
+    fontSize: 16,
+    marginBottom: 12
+  },
+  gradientButton: {
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 20
+  },
+  submitText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 16
+  },
+  error: {
+    color: '#B85C5C',
+    textAlign: 'center',
+    marginBottom: 12
+  },
+  resultCard: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 16,
+    borderColor: '#EEE',
+    borderWidth: 1,
+    marginBottom: 20
+  },
+  resultTitle: {
+    fontWeight: '700',
+    fontSize: 16,
+    marginBottom: 8,
+    color: '#1A1A1A'
+  },
+  resultText: {
+    fontSize: 14,
+    color: '#333',
+    marginBottom: 6
+  },
+  scheduleBlock: {
+    marginBottom: 16
+  }
 })

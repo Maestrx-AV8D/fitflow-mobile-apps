@@ -424,6 +424,7 @@ export default function SignIn() {
       <TextInput
         style={styles.input}
         placeholder="Email"
+        placeholderTextColor="#999"
         autoCapitalize="none"
         keyboardType="email-address"
         value={email}
@@ -432,6 +433,7 @@ export default function SignIn() {
       <TextInput
         style={styles.input}
         placeholder="Password"
+        placeholderTextColor="#999"
         secureTextEntry
         value={password}
         onChangeText={setPassword}
@@ -457,10 +459,43 @@ export default function SignIn() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex:1, justifyContent:'center', padding:24, backgroundColor:'#0E0C15' },
-  title:     { fontSize:28, fontWeight:'700', color:'#AC6AFF', marginBottom:24, textAlign:'center' },
-  input:     { backgroundColor:'#15131D', color:'#FFF', padding:12, borderRadius:8, marginBottom:16 },
-  button:    { backgroundColor:'#AC6AFF', padding:14, borderRadius:8, alignItems:'center', marginBottom:12 },
-  buttonText:{ color:'#FFF', fontWeight:'600', fontSize:16 },
-  toggle:    { color:'#CAC6DD', textAlign:'center', marginTop:8 },
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#FDFCF9'
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 24,
+    textAlign: 'center'
+  },
+  input: {
+    backgroundColor: '#FFFFFF',
+    color: '#1A1A1A',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E5E5'
+  },
+  button: {
+    backgroundColor: '#1A1A1A',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 16
+  },
+  toggle: {
+    color: '#4A6C6F',
+    textAlign: 'center',
+    marginTop: 8
+  }
 })
