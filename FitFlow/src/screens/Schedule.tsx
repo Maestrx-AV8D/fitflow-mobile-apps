@@ -1,0 +1,264 @@
+// src/screens/Schedule.tsx
+import React, { useState, useEffect } from 'react'
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+} from 'react-native'
+import { format, parseISO } from 'date-fns'
+import { useNavigation } from '@react-navigation/native'
+import { getSchedule, saveSchedule } from '../lib/api'
+
+export default function Schedule() {
+  const navigation = useNavigation<any>()
+  const [plan, setPlan] = useState<Array<any>>([])
+  const [showCompleted, setShowCompleted] = useState(true)
+
+  // load from AsyncStorage on mount
+  useEffect(() => {
+    ;(async () => {
+      const stored = await getSchedule()
+      setPlan(stored)
+    })()
+  }, [])
+
+  // helper: persist and update state
+  const persist = async (newPlan: Array<any>) => {
+    setPlan(newPlan)
+    await saveSchedule(newPlan)
+  }
+
+  const filtered = plan.filter(d => (showCompleted ? true : !d.done))
+
+  function completeDay(idx: number) {
+    const updated = plan.map((d, i) =>
+      i === idx ? { ...d, done: true } : d
+    )
+    persist(updated)
+  }
+
+  function removeDay(idx: number) {
+    const updated = plan.filter((_, i) => i !== idx)
+    persist(updated)
+  }
+
+  function clearAll() {
+    Alert.alert(
+      'Clear Schedule',
+      'This will remove your entire schedule. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes, Clear',
+          style: 'destructive',
+          onPress: () => persist([]),
+        },
+      ]
+    )
+  }
+
+  function importToLog(day: any, exercise?: string) {
+    const entry: any = {
+      date: day.date,
+      type: day.mainSet?.length ? 'Gym' : 'Run',
+      notes: exercise || day.mainSet?.join(', '),
+      exercises: [],
+      segments: [],
+    }
+    if (exercise) {
+      const [name, rest = ''] = exercise.split(':')
+      const sets = rest.match(/(\d+)×/)?.[1] || ''
+      const reps = rest.match(/×(\d+)/)?.[1] || ''
+      entry.exercises = [{ name: name.trim(), sets, reps, weight: '' }]
+    } else {
+      entry.exercises = (day.mainSet || []).map((s: string) => {
+        const [name, rest = ''] = s.split(':')
+        const sets = rest.match(/(\d+)×/)?.[1] || ''
+        const reps = rest.match(/×(\d+)/)?.[1] || ''
+        return { name: name.trim(), sets, reps, weight: '' }
+      })
+    }
+    navigation.navigate('Log', { entry })
+  }
+
+  return (
+    <View style={styles.screen}>
+    <ScrollView contentContainerStyle={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>📅 Your Schedule</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity onPress={() => setShowCompleted(s => !s)}>
+            <Text style={styles.toggle}>
+              {showCompleted ? 'Hide' : 'Show'} Completed
+            </Text>
+          </TouchableOpacity>
+          {plan.length > 0 && (
+            <TouchableOpacity onPress={clearAll}>
+              <Text style={styles.clear}>Clear All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {/* Summary */}
+      {plan.length > 0 && (
+        <Text style={styles.summary}>
+          Showing {filtered.length} of {plan.length} days
+        </Text>
+      )}
+
+      {/* Empty state */}
+      {plan.length === 0 && (
+        <Text style={styles.empty}>
+          No schedule yet. Generate one in Coach.
+        </Text>
+      )}
+
+      {/* Day cards */}
+      {filtered.map((day, i) => (
+        <View
+          key={day.date}
+          style={[styles.card, day.done && { opacity: 0.5 }]}
+        >
+          <View style={styles.cardHeader}>
+            <Text style={styles.date}>
+              {format(parseISO(day.date), 'dd/MM/yy')}
+            </Text>
+            <View style={styles.cardActions}>
+              {!day.done && (
+                <TouchableOpacity onPress={() => completeDay(i)}>
+                  <Text style={styles.complete}>Complete</Text>
+                </TouchableOpacity>
+              )}
+              {day.mainSet?.length > 0 && (
+                <TouchableOpacity onPress={() => importToLog(day)}>
+                  <Text style={styles.import}>Import</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => removeDay(i)}>
+                <Text style={styles.remove}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {(['warmUp', 'mainSet', 'coolDown'] as const).map(sec => (
+            <View key={sec} style={styles.section}>
+              <Text style={styles.sectionTitle}>
+                {sec === 'warmUp'
+                  ? 'Warm-Up'
+                  : sec === 'mainSet'
+                  ? 'Main Set'
+                  : 'Cool-Down'}
+              </Text>
+              {(day[sec] || []).map((item: string, j: number) => (
+                <View key={j} style={styles.lineRow}>
+                  <Text style={styles.item}>• {item}</Text>
+                  {sec === 'mainSet' && (
+                    <TouchableOpacity
+                      onPress={() => importToLog(day, item)}
+                    >
+                      <Text style={styles.import}>Import</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
+          ))}
+        </View>
+      ))}
+    </ScrollView></View>
+  )
+}
+
+const styles = StyleSheet.create({
+    screen: {
+    flex: 1,
+    backgroundColor: '#0E0C15',
+  },
+  container: {
+    padding: 16,
+    paddingTop: 70,
+    backgroundColor: '#0E0C15',
+    paddingBottom: 40,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerActions: {
+    flexDirection: 'row',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  toggle: {
+    color: '#CAC6DD',
+    fontSize: 14,
+    marginRight: 12,
+  },
+  clear: {
+    color: '#FF776F',
+    fontSize: 14,
+  },
+  summary: {
+    color: '#ADA8C3',
+    fontSize: 12,
+    marginVertical: 8,
+  },
+  empty: {
+    color: '#ADA8C3',
+    textAlign: 'center',
+    marginTop: 32,
+    fontSize: 16,
+  },
+  card: {
+    backgroundColor: '#2E2A41',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  date: { color: '#CAC6DD', fontSize: 14 },
+  cardActions: { flexDirection: 'row', alignItems: 'center' },
+  complete: {
+    color: '#7ADB78',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 12,
+  },
+  import: {
+    color: '#AC6AFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 12,
+  },
+  remove: {
+    color: '#FF6B6B',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  section: { marginTop: 8 },
+  sectionTitle: {
+    color: '#ADA8C3',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  lineRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  item: { color: '#FFFFFF', flex: 1, marginLeft: 4, marginBottom: 2 },
+})
