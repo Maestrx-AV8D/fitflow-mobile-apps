@@ -1,31 +1,25 @@
 // src/navigation/AppNavigator.tsx
-import React from 'react'
+import { Ionicons, MaterialIcons } from '@expo/vector-icons'
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import {
-  NavigationContainer,
-  DefaultTheme,
   DarkTheme,
-  createNavigationContainerRef,
+  DefaultTheme,
+  NavigationContainer
 } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
-import { useColorScheme } from 'react-native'
-import { StyleSheet, TouchableOpacity, View, Text } from 'react-native'
-import { MaterialIcons, Ionicons } from '@expo/vector-icons'
+import React from 'react'
+import { StyleSheet, TouchableOpacity, View, useColorScheme } from 'react-native'
 
-import { useAuth } from '../hooks/useAuth'
-import SignIn        from '../screens/SignIn'
-import Dashboard     from '../screens/Dashboard'
-import Log           from '../screens/Log'
-import History       from '../screens/History'
-import SmartWorkout  from '../screens/SmartWorkout'
-import Schedule      from '../screens/Schedule'
-import Profile       from '../screens/Profile'
-import VerifyCode from '../screens/VerifyCode'
-import Onboarding from '../screens/Onboarding'
-import { useTheme } from '../theme/theme'
 import FloatingOverlay from '../components/FloatingOverlay'
-
-export const navigationRef = createNavigationContainerRef<ReactNavigation.RootParamList>()
+import { useAuth } from '../hooks/useAuth'
+import History from '../screens/History'
+import Onboarding from '../screens/Onboarding'
+import Schedule from '../screens/Schedule'
+import SignIn from '../screens/SignIn'
+import SmartWorkout from '../screens/SmartWorkout'
+import { useTheme } from '../theme/theme'
+import MainStack from './MainStack'
+import { navigationRef } from './navigationRef'
 
 const Stack = createNativeStackNavigator()
 const Tabs  = createBottomTabNavigator()
@@ -52,13 +46,13 @@ function MainTabs() {
               IconComp = MaterialIcons;
               iconName = 'history';
               break;
+            case 'Schedule':
+              IconComp = Ionicons;
+              iconName = 'calendar-outline';
+              break;
             case 'Coach':
               IconComp = Ionicons;
               iconName = 'flash-outline';
-              break;
-            case 'Profile':
-              IconComp = Ionicons;
-              iconName = 'person-outline';
               break;
             default:
               IconComp = MaterialIcons;
@@ -70,14 +64,14 @@ function MainTabs() {
             tabBarShowLabel: true,
             tabBarActiveTintColor: colors.primary,
             tabBarInactiveTintColor: colors.textSecondary,
-            tabBarLabelStyle: { fontSize: 12, marginBottom: 6 },
+            tabBarLabelStyle: { fontSize: 12, marginBottom: 6, marginTop: 2 },
             tabBarStyle: {
               position: 'absolute',
               left: spacing.md,
               right: spacing.md,
-              bottom: spacing.md,
-              height: 64,
-              borderRadius: 32,
+              //bottom: spacing.xs,
+              height: 90,
+              borderRadius: 15,
               backgroundColor: colors.surface,
               shadowColor: colors.shadow,
               shadowOpacity: 0.1,
@@ -90,10 +84,10 @@ function MainTabs() {
           };
         }}
       >
-        <Tabs.Screen name="Dashboard" component={Dashboard} options={{ tabBarLabel: 'Home' }} />
-
+        <Tabs.Screen name="Dashboard" component={MainStack} options={{ tabBarLabel: 'Home' }} />
+        <Tabs.Screen name="Schedule" component={Schedule} options={{ tabBarLabel: 'Schedule' }} />
         <Tabs.Screen
-          name="Log"
+          name="Star"
           component={View} // hidden, placeholder
           options={{
             tabBarButton: () => (
@@ -114,10 +108,8 @@ function MainTabs() {
             tabBarLabel: () => null,
           }}
         />
-
-        <Tabs.Screen name="History" component={History} options={{ tabBarLabel: 'History' }} />
-        <Tabs.Screen name="Coach" component={SmartWorkout} options={{ tabBarLabel: 'Coach' }} />
-        <Tabs.Screen name="Profile" component={Profile} options={{ tabBarLabel: 'Profile' }} />
+        <Tabs.Screen name="Coach" component={SmartWorkout} options={{ tabBarLabel: 'Coach' }} />  
+         <Tabs.Screen name="History" component={History} options={{ tabBarLabel: 'History' }} />
       </Tabs.Navigator>
 
       {/* Overlay Menu */}
@@ -136,7 +128,9 @@ export default function AppNavigator() {
     <NavigationContainer theme={scheme === 'dark' ? DarkTheme : DefaultTheme} ref={navigationRef}>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
       {user ? (
+        
         <Stack.Screen name="Main" component={MainTabs} />
+
       ) : hasOnboarded ? (
         <Stack.Screen name="SignIn" component={SignIn} />
       ) : (
@@ -150,7 +144,7 @@ export default function AppNavigator() {
 const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
-    top: -28,
+    //top: -28,
     alignSelf: 'center',
     width: 56,
     height: 56,

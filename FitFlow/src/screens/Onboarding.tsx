@@ -1,17 +1,16 @@
 // src/screens/Onboarding.tsx
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  TextInput,
   ScrollView,
-  Image,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../hooks/useAuth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // now includes the “Welcome” page
 const steps = ['Welcome', 'Experience', 'Goals', 'Equipment'] as const;
@@ -38,7 +37,6 @@ export default function Onboarding() {
         await AsyncStorage.setItem('hasOnboarded', 'true')
         setHasOnboarded(true)
       // TODO: save all data (Supabase / AsyncStorage) then:
-      navigation.navigate('SignIn' as never);
     }
   }
 

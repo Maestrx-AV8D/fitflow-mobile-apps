@@ -1,8 +1,16 @@
-import React from 'react'
-import { View, TouchableOpacity, Text, StyleSheet, Dimensions, Pressable } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
+import { useNavigation } from '@react-navigation/native'
+import React from 'react'
+import {
+  Dimensions,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native'
+import { navigationRef } from '../navigation/navigationRef'
 import { useTheme } from '../theme/theme'
-import { navigationRef } from '../navigation/AppNavigator'
 
 const SCREEN_WIDTH = Dimensions.get('window').width
 
@@ -11,48 +19,31 @@ interface FloatingOverlayProps {
 }
 
 export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
-  const { colors, spacing, typography } = useTheme()
+  const { colors } = useTheme()
+  const navigation = useNavigation<any>()
+
+  const buttons: { icon: string; label: string; screen: 'Journal' | 'Log' | 'Fasting' }[] = [
+    { icon: 'timer', label: 'Fasting', screen: 'Fasting' },
+    { icon: 'add-circle', label: 'Log', screen: 'Log' },
+    { icon: 'sparkles', label: 'Journal', screen: 'Journal' },  
+  ]
 
   return (
     <>
-      {/* Dismiss background */}
       <Pressable style={styles.backdrop} onPress={onClose} />
-
-      {/* Curved overlay */}
-      <View style={[styles.panel, { backgroundColor: colors.surface }]}>
-        <View style={styles.topRow}>
-          <TouchableOpacity
-            style={styles.circleBtn}
-            onPress={() => {
-              onClose()
-              navigationRef.current?.navigate('Log')
-            }}
-          >
-            <Ionicons name="leaf-outline" size={24} color={colors.textPrimary} />
-            <Text style={[styles.label, { color: colors.textPrimary }]}>Empty Page{'\n'}Journal</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.circleBtn, styles.centerCircle]}
-            onPress={onClose}
-          >
-            <Ionicons name="add" size={24} color={colors.textSecondary} />
-            <Text style={[styles.label, { color: colors.textSecondary }]}>Add or Edit</Text>
-          </TouchableOpacity>
-        </View>
-
+      <View style={[styles.panel , { backgroundColor: '#F2F2F2' }]}>
         <View style={styles.bottomRow}>
-          {[
-            { icon: 'sparkles-outline', label: 'Journaling Suggestions', screen: 'SmartWorkout' },
-            { icon: 'document-outline', label: 'New Empty Journal', screen: 'Log' },
-            { icon: 'happy-outline', label: 'Mood Check-In', screen: 'History' },
-          ].map(({ icon, label, screen }) => (
+          {buttons.map(({ icon, label, screen }, index) => (
             <TouchableOpacity
               key={screen}
-              style={styles.card}
+              style={[
+                styles.card,
+                index === 1 && styles.middleCard,
+                index > 0 && styles.overlapCard, // apply overlap margin
+              ]}
               onPress={() => {
                 onClose()
-                navigationRef.current?.navigate(screen)
+                navigationRef.current?.navigate('Dashboard', {screen:screen})
               }}
             >
               <Ionicons name={icon as any} size={24} color={colors.textPrimary} />
@@ -61,7 +52,6 @@ export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
           ))}
         </View>
 
-        {/* Close button */}
         <TouchableOpacity style={styles.closeFab} onPress={onClose}>
           <Ionicons name="close" size={20} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -73,77 +63,64 @@ export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    backgroundColor: 'rgba(0,0,0,0.25)',
   },
   panel: {
     position: 'absolute',
     bottom: 0,
     width: SCREEN_WIDTH,
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-    paddingTop: 24,
-    paddingBottom: 48,
-    paddingHorizontal: 20,
+    borderTopLeftRadius: 40,
+    borderTopRightRadius: 40,
+    paddingTop: 32,
+    paddingBottom: 100,
+    paddingHorizontal: 12,
     alignItems: 'center',
     shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 20,
-  },
-  topRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-    marginBottom: 28,
-  },
-  circleBtn: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  centerCircle: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 50,
-    width: 56,
-    height: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  label: {
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    elevation: 15,
   },
   bottomRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-    marginTop: 8,
+    justifyContent: 'center',
+    marginTop: 12,
   },
   card: {
-    backgroundColor: '#F2F2F2',
-    borderRadius: 16,
-    paddingVertical: 20,
+    backgroundColor: '#ffff',
+    borderRadius: 20,
+    paddingVertical: 44,
     paddingHorizontal: 12,
     width: 100,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 4,
+    zIndex: 1,
+    marginBottom: 30,
+  },
+  overlapCard: {
+    marginLeft: -16, // tighter spacing
+  },
+  middleCard: {
+    transform: [{ translateY: 10 }],
+    zIndex: 2,
   },
   cardLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
-    marginTop: 6,
+    marginTop: 8,
+    marginBottom: 10,
   },
   closeFab: {
     position: 'absolute',
-    bottom: 10,
-    alignSelf: 'center',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#EEE',
+    bottom: 33.5,
+    width: 57,
+    height: 57,
+    borderRadius: 29,
+    backgroundColor: '#EAEAEA',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 12,
   },
 })

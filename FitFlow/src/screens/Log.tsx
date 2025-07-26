@@ -1,21 +1,21 @@
 // src/screens/Log.tsx
-import React, { useState, useEffect } from 'react'
+import { Picker } from '@react-native-picker/picker';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import React, { useState } from 'react';
 import {
-  ScrollView,
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   Alert,
-  TouchableWithoutFeedback,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-} from 'react-native'
-import { Picker } from '@react-native-picker/picker'
-import { useNavigation, useRoute } from '@react-navigation/native'
-import { supabase } from '../lib/api'  // or supabaseClient
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
+} from 'react-native';
+import { supabase } from '../lib/api'; // or supabaseClient
 
 type Exercise = { name: string; sets: string; reps: string; weight: string }
 
