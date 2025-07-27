@@ -1,24 +1,24 @@
 // src/screens/History.tsx
+import { Ionicons, MaterialIcons } from '@expo/vector-icons'
+import { useNavigation } from '@react-navigation/native'
+import { LinearGradient } from 'expo-linear-gradient'
 import React, { useEffect, useState } from 'react'
 import {
+  Alert,
   ScrollView,
-  View,
-  Text,
   StyleSheet,
+  Text,
   TouchableOpacity,
-  Alert
+  View
 } from 'react-native'
-import { useNavigation } from '@react-navigation/native'
-import { MaterialIcons, Ionicons } from '@expo/vector-icons'
-import { supabase, getEntries } from '../lib/api'
-import { LinearGradient } from 'expo-linear-gradient'
+import { getEntries, supabase } from '../lib/api'
 
 type Entry = {
   id: number
   date: string
   type: string
-  exercises?: Array<{ name: string; sets: number; reps: number; weight?: number }>
-  segments?: Array<{ distance?: string; laps?: number; time?: string }>
+  exercises?: { name: string; sets: number; reps: number; weight?: number }[]
+  segments?: { distance?: string; laps?: number; time?: string }[]
   notes?: string
 }
 
@@ -61,8 +61,10 @@ export default function History() {
   }
 
   const gym = entries.filter(e => e.type === 'Gym')
-  const other = entries.filter(e => e.type !== 'Gym')
-
+const fasts = entries.filter(e => e.type === 'Fasting')
+const other = entries.filter(
+  e => e.type !== 'Gym' && e.type !== 'Fasting'
+)
   const thisMonth = new Date().toLocaleString('en-US', { month: 'long' })
   const thisMonthEntries = entries.filter(entry =>
     new Date(entry.date).getMonth() === new Date().getMonth()
@@ -74,7 +76,8 @@ export default function History() {
         Gym: '#AC6AFF',
         Run: '#43E97B',
         Swim: '#5DA5FF',
-        Cycle: '#FFC300'
+        Cycle: '#FFC300',
+        Fasting: '#FF6A6A',
       }[entry.type] ?? '#AAA'
 
     return (
@@ -82,7 +85,21 @@ export default function History() {
         <View style={styles.cardHeader}>
           <Text style={styles.date}>{new Date(entry.date).toLocaleDateString('en-GB')}</Text>
           <View style={[styles.badge, { backgroundColor: badgeColor }]}>
-            <Text style={styles.badgeText}>{entry.type}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+  {entry.type === 'Fasting' ? (
+    <MaterialIcons name="timer" size={14} color="#fff" style={{ marginRight: 4 }} />
+  ) : entry.type === 'Gym' ? (
+    <MaterialIcons name="fitness-center" size={14} color="#fff" style={{ marginRight: 4 }} />
+  ) : entry.type === 'Run' ? (
+    <Ionicons name="walk" size={14} color="#fff" style={{ marginRight: 4 }} />
+  ) : entry.type === 'Swim' ? (
+    <Ionicons name="water" size={14} color="#fff" style={{ marginRight: 4 }} />
+  ) : entry.type === 'Cycle' ? (
+    <MaterialIcons name="directions-bike" size={14} color="#fff" style={{ marginRight: 4 }} />
+  ) : null}
+  <Text style={styles.badgeText}>{entry.type}</Text>
+</View>
+
           </View>
         </View>
 
@@ -105,7 +122,14 @@ export default function History() {
         ) : null}
 
         {entry.notes ? (
-          <Text style={styles.notes}>“{entry.notes}”</Text>
+          <Text
+    style={[
+      styles.notes,
+      entry.type === 'Fasting' && { color: '#FF6A6A', fontWeight: '600' }
+    ]}
+  >
+    {entry.notes}
+  </Text>
         ) : null}
 
         <View style={styles.actions}>
@@ -131,6 +155,7 @@ export default function History() {
   return (
     <View style={[styles.screen, { backgroundColor: '#FDFCF9' }]}>
       <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>History</Text>
         <LinearGradient
           colors={['#1A1A1A', '#2A2A2A']}
           style={styles.insightsCard}
@@ -147,14 +172,17 @@ export default function History() {
           </TouchableOpacity>
         </LinearGradient>
 
-        <Text style={styles.title}>History</Text>
+        
 
         <Text style={styles.sectionTitle}>🏋️ Gym Workouts</Text>
         {gym.length
           ? gym.map(renderEntry)
           : <Text style={styles.empty}>No gym workouts logged.</Text>
         }
-
+<Text style={[styles.sectionTitle, { marginTop: 24 }]}>⏳ Fasting Logs</Text>
+{fasts.length
+  ? fasts.map(renderEntry)
+  : <Text style={styles.empty}>No fasting logs yet.</Text>}
         <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
           🎽 Other Activities
         </Text>
@@ -162,6 +190,9 @@ export default function History() {
           ? other.map(renderEntry)
           : <Text style={styles.empty}>No other activities logged.</Text>
         }
+
+        
+
       </ScrollView>
     </View>
   )

@@ -1,9 +1,10 @@
 // lib/api.ts
-import Constants from 'expo-constants'
-import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import { subDays, format } from 'date-fns'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { format, subDays } from 'date-fns'
+import Constants from 'expo-constants'
 import { getCurrentUser } from './getCurrentUser'
+
 
 // 1) initialize Supabase
 const SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL as string
@@ -132,16 +133,23 @@ export async function getEntryCount(): Promise<number> {
 
 export async function getEntries(): Promise<any[]> {
   const {
-    data,
-    error,
-  } = await supabase
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser()
+  if (userError || !user) throw new Error('Not signed in')
+
+  const { data, error } = await supabase
     .from('entries')
     .select('*')
+    .eq('user_id', user.id) // 🔐 filter by current user
     .order('date', { ascending: false })
+
   if (error) throw error
   return data ?? []
 }
 
+
+/** Total number of exercises completed across all entries */
 export async function getExercisesCompleted(): Promise<number> {
   const { data, error } = await supabase.from('entries').select('exercises')
   if (error || !data) throw error || new Error('Failed to load entries')
@@ -188,7 +196,7 @@ export async function getLast7DaysWorkouts(): Promise<
 // ————————————————————————————————————————————————————————————————————————————————
 // Schedule
 export async function getSchedule(): Promise<
-  Array<{ date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }>
+  { date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }[]
 > {
   try {
     const raw = await AsyncStorage.getItem('smartSchedule')
@@ -200,7 +208,7 @@ export async function getSchedule(): Promise<
 }
 
 export async function saveSchedule(
-  plan: Array<{ date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }>
+  plan: { date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }[]
 ): Promise<void> {
   try {
     await AsyncStorage.setItem('smartSchedule', JSON.stringify(plan))
