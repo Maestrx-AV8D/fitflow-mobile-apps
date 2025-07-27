@@ -24,7 +24,6 @@ import { MaterialIcons, Ionicons } from '@expo/vector-icons'
 
 import WeeklyWorkoutsChart from '../components/WeeklyWorkoutChart'
 import {
-  getUserName,
   getEntryCount,
   getExercisesCompleted,
   getLatestWorkoutDate,
@@ -52,7 +51,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     ;(async () => {
-      const userName = await getUserName()
+      const {
+        data: { user }
+      } = await supabase.auth.getUser()
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('user_id', user.id)
+        .single()
+      const userName = data?.full_name?.split(' ')[0] || ''
       setName(userName)
       setTotalWorkouts(await getEntryCount())
       setExercisesCompleted(await getExercisesCompleted())
@@ -181,7 +188,6 @@ export default function Dashboard() {
         contentContainerStyle={{ paddingLeft: 4, marginBottom: 32 }}
         renderItem={({ item }) => (
           <View style={[styles.inspirationCard, { backgroundColor: colors.surface }]}>
-
             <Text style={[typography.h3, { color: colors.textPrimary, marginBottom: 8, textAlign: 'center'}]}>
               {item.content}
             </Text>
@@ -321,14 +327,14 @@ export default function Dashboard() {
           <WeeklyWorkoutsChart data={chartData} />
         </View>
         <Text style={{
-                  color:  colors.textSecondary,
-                  fontWeight: '700' ,
-                  fontSize: 16,
-                  textAlign: 'center',
-                  marginBottom: 15
-                }}>
-                  Get Inspired
-                </Text>
+          color: colors.textSecondary,
+          fontWeight: '700',
+          fontSize: 16,
+          textAlign: 'center',
+          marginBottom: 15
+        }}>
+          Get Inspired
+        </Text>
         {renderInspirationCarousel()}
       </ScrollView>
 

@@ -3,7 +3,7 @@ import Constants from 'expo-constants'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { subDays, format } from 'date-fns'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-
+import { getCurrentUser } from './getCurrentUser'
 
 // 1) initialize Supabase
 const SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL as string
@@ -13,52 +13,6 @@ const match = SUPABASE_URL.match(/https:\/\/(.+)\.supabase\.co/)
 if (!match) throw new Error('Invalid SUPABASE_URL')
 const PROJECT_REF = match[1]
 
-// send the one-time code row and email it
-export async function sendLoginCode(email: string) {
-  const res = await fetch(
-    `https://${PROJECT_REF}.functions.supabase.co/send-login-code`,
-    {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        apikey:           SUPABASE_ANON_KEY,
-        Authorization:   `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ email }),
-    }
-  )
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
-    throw new Error(`Error ${res.status}: ${text}`)
-  }
-
-  return
-}
-
-// verify code and sign in via RPC
-export async function verifyLoginCode(email: string, code: string) {
-  // check code table
-  const { data: entry, error } = await supabase
-    .from('login_codes')
-    .select('*')
-    .eq('email', email)
-    .eq('code', code)
-    .gt('expires_at', new Date().toISOString())
-    .single();
-  if (error || !entry) throw new Error('Invalid or expired code');
-
-  // delete to prevent reuse
-  await supabase.from('login_codes').delete().eq('id', entry.id);
-
-  // mint session via RPC
-  const { data, error: rpcErr } = await supabase.rpc('login_with_code', { p_email: email });
-  if (rpcErr || !data?.session) throw rpcErr ?? new Error('Login failed');
-
-  await supabase.auth.setSession(data.session);
-}
-
-console.log("Hitting Supabase at out", SUPABASE_URL)
 // ————————————————————————————————————————————————————————————————————————————————
 // Auth & Profile
 export async function signIn(email: string, password: string) {
@@ -76,26 +30,18 @@ export async function signUp(email: string, password: string) {
   return data.user
 }
 
-export async function getUserName(): Promise<string> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return 'Guest'
-  // try profile table:
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('user_id', user.id)
-    .single()
-  return profile?.full_name ?? user.email!.split('@')[0]
-}
-
 export async function getProfile(): Promise<{
   fullName: string
   age: string
   gender: string
   height: string
   weight: string
+  goals: {
+    goalType: string
+    targetValue: string
+    targetDate: string
+  }
+  is_premium: boolean
 } | null> {
   const {
     data: { user },
@@ -104,7 +50,7 @@ export async function getProfile(): Promise<{
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('full_name,age,gender,height_cm,current_weight_kg')
+    .select('full_name,age,gender,height_cm,current_weight_kg, goals, is_premium')
     .eq('user_id', user.id)
     .single()
 
@@ -116,6 +62,8 @@ export async function getProfile(): Promise<{
     gender: data.gender || '',
     height: data.height_cm?.toString() || '',
     weight: data.current_weight_kg?.toString() || '',
+    goals: data.goals ?? { goalType: '', targetValue: '', targetDate: '' },
+    is_premium: data.is_premium ?? false
   }
 }
 
@@ -125,6 +73,11 @@ export async function saveProfile(payload: {
   gender: string
   height: string
   weight: string
+  goals: {
+    goalType: string
+    targetValue: string
+    targetDate: string
+  }
 }): Promise<void> {
   const {
     data: { user },
@@ -138,6 +91,8 @@ export async function saveProfile(payload: {
     gender: payload.gender,
     height_cm: Number(payload.height),
     current_weight_kg: Number(payload.weight),
+    goals: payload.goals,
+    update_at: new Date()
   }
 
   const { error } = await supabase
@@ -145,6 +100,20 @@ export async function saveProfile(payload: {
     .upsert(updates, { onConflict: 'user_id' })
 
   if (error) throw error
+}
+
+export async function getUserName(): Promise<string> {
+  const user = await getCurrentUser()
+  if (!user) return ''
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('full_name')
+    .eq('id', user.id)
+    .single()
+  if (error || !data) {
+    return user.name || 'User'
+  }
+  return data.full_name || 'User'
 }
 
 // ————————————————————————————————————————————————————————————————————————————————
@@ -173,16 +142,12 @@ export async function getEntries(): Promise<any[]> {
   return data ?? []
 }
 
-/** Total number of exercises completed across all entries */
 export async function getExercisesCompleted(): Promise<number> {
-  const { data, error } = await supabase
-    .from('entries')
-    .select('exercises')
+  const { data, error } = await supabase.from('entries').select('exercises')
   if (error || !data) throw error || new Error('Failed to load entries')
   return data.reduce((sum, entry) => sum + (entry.exercises?.length || 0), 0)
 }
 
-/** ISO date string of the most recent workout, or null if none */
 export async function getLatestWorkoutDate(): Promise<string | null> {
   const { data, error } = await supabase
     .from('entries')
@@ -194,12 +159,10 @@ export async function getLatestWorkoutDate(): Promise<string | null> {
   return data?.date ?? null
 }
 
-// build last-7-days stacked data
 export async function getLast7DaysWorkouts(): Promise<
   { day: string; Gym: number; Cycle: number; Other: number }[]
 > {
   const entries = await getEntries()
-  // prefill
   const week = Array.from({ length: 7 }).map((_, i) => {
     const d = subDays(new Date(), 6 - i)
     return {
@@ -223,7 +186,7 @@ export async function getLast7DaysWorkouts(): Promise<
 }
 
 // ————————————————————————————————————————————————————————————————————————————————
-// Read the schedule from device storage
+// Schedule
 export async function getSchedule(): Promise<
   Array<{ date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }>
 > {
@@ -236,7 +199,6 @@ export async function getSchedule(): Promise<
   }
 }
 
-// Write the schedule back to device storage
 export async function saveSchedule(
   plan: Array<{ date: string; warmUp: string[]; mainSet: string[]; coolDown: string[]; done?: boolean }>
 ): Promise<void> {
@@ -246,8 +208,9 @@ export async function saveSchedule(
     console.warn('Failed to save schedule', e)
   }
 }
+
 // ————————————————————————————————————————————————————————————————————————————————
-// OpenAI‐powered “SmartWorkout”
+// OpenAI-powered “SmartWorkout”
 const OPENAI_KEY = Constants.expoConfig?.extra?.OPENAI_KEY as string
 
 async function chatCompletion(system: string, user: string) {
@@ -270,40 +233,30 @@ async function chatCompletion(system: string, user: string) {
   return choices[0].message.content
 }
 
-// export async function generateWorkout(prompt: string) {
-//   const system = `You’re a certified fitness coach. Return JSON with keys "warmUp","mainSet","coolDown".`
-//   const txt = await chatCompletion(system, prompt)
-//   const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
-//   return json as { warmUp: string[]; mainSet: string[]; coolDown: string[] };
-// }
-
 export async function generateWorkout(prompt: string) {
   const system = `
-You’re a certified fitness coach.  When asked for a workout routine,
-always reply with valid JSON **only**, and use this exact shape:
+You’re a certified fitness coach. Always return JSON with:
 {
   "warmUp": [string, …],
   "mainSet": [string, …],
   "coolDown": [string, …]
 }
-Make sure each value is an array of strings—even if there’s only one item.
-`;
-  const txt = await chatCompletion(system, prompt);
-  const json = JSON.parse(
-    txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)
-  ) as { warmUp: string[]; mainSet: string[]; coolDown: string[] };
-  return json;
+All values should be string arrays.
+`
+  const txt = await chatCompletion(system, prompt)
+  const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
+  return json
 }
 
 export async function generateSchedule(prompt: string) {
-  const system = `You’re a certified fitness coach. Return JSON { "plan": [ … ] } each with date,warmUp,mainSet,coolDown.`
+  const system = `You’re a certified fitness coach. Return JSON { "plan": [ … ] } with date, warmUp, mainSet, coolDown.`
   const txt = await chatCompletion(system, prompt)
   const obj = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
   return obj.plan || []
 }
 
 export async function generateNutrition(prompt: string) {
-  const system = `You’re a registered dietitian. Return JSON with breakfast,lunch,dinner,ingredients.`
+  const system = `You’re a registered dietitian. Return JSON with breakfast, lunch, dinner, ingredients.`
   const txt = await chatCompletion(system, prompt)
   const obj = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
   return obj
