@@ -1,4 +1,4 @@
-// SmartWorkout.tsx
+// src/screens/SmartWorkout.tsx
 import React, { useEffect, useState } from 'react'
 import {
   View,
@@ -9,18 +9,19 @@ import {
   ActivityIndicator,
   StyleSheet,
   Animated,
-  Easing
+  Easing,
 } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useNavigation } from '@react-navigation/native'
-import { format, parseISO } from 'date-fns'
+import { format, parse, isValid } from 'date-fns'
 import {
   generateWorkout,
   generateSchedule,
-  generateNutrition
+  generateNutrition,
 } from '../lib/api'
 
 type Workout = { warmUp: string[]; mainSet: string[]; coolDown: string[] }
+
 type ScheduleDay = {
   date: string
   warmUp: string[]
@@ -28,6 +29,7 @@ type ScheduleDay = {
   coolDown: string[]
   done?: boolean
 }
+
 type NutritionPlan = {
   breakfast?: { name: string; protein_g: number; fat_g: number; carbs_g: number; notes: string }[]
   lunch?: { name: string; protein_g: number; fat_g: number; carbs_g: number; notes: string }[]
@@ -54,7 +56,7 @@ export default function SmartWorkout() {
       toValue: 1,
       duration: 300,
       easing: Easing.inOut(Easing.ease),
-      useNativeDriver: true
+      useNativeDriver: true,
     }).start()
   }, [view])
 
@@ -66,29 +68,47 @@ export default function SmartWorkout() {
     }
   }
 
+  function parseFlexibleDate(dateStr: string): string {
+    const formats = ['yyyy-MM-dd', 'dd/MM/yyyy', 'd MMM yyyy', 'dd/MM/yy']
+    for (const fmt of formats) {
+      try {
+        const parsed = parse(dateStr, fmt, new Date())
+        if (isValid(parsed)) return format(parsed, 'dd/MM/yyyy')
+      } catch {}
+    }
+    return dateStr
+  }
+
+  function parseExerciseDetails(str: string) {
+    const [namePart, rest = ''] = str.split(':')
+    const sets = rest.match(/(\d+)×/)?.[1] || ''
+    const reps = rest.match(/×(\d+)/)?.[1] || ''
+    const weight = rest.match(/@ ?([\d.]+)(kg|lbs)?/)?.[1] || ''
+    return { name: namePart.trim(), sets, reps, weight }
+  }
+
   function importToLog(day: ScheduleDay, exercise?: string) {
     const entry: any = {
       date: day.date,
-      type: day.mainSet.length ? 'Gym' : 'Run',
-      notes: exercise || day.mainSet.join(', '),
+      type: 'Gym',
+      notes: exercise || day.mainSet?.join(', '),
       exercises: [],
+      segments: [],
+    }
+
+    entry.exercises = (exercise ? [exercise] : day.mainSet || []).map(parseExerciseDetails)
+    navigation.navigate('Log' as never, { entry } as never)
+  }
+
+  function importQuickWorkoutToLog() {
+    if (!workout) return
+    const entry: any = {
+      date: format(new Date(), 'yyyy-MM-dd'),
+      type: 'Gym',
+      notes: workout.mainSet.join(', '),
+      exercises: workout.mainSet.map(parseExerciseDetails),
       segments: []
     }
-
-    if (exercise) {
-      const [name, rest = ''] = exercise.split(':')
-      const sets = rest.match(/(\d+)×/)?.[1] || ''
-      const reps = rest.match(/×(\d+)/)?.[1] || ''
-      entry.exercises = [{ name: name.trim(), sets, reps, weight: '' }]
-    } else {
-      entry.exercises = day.mainSet.map(s => {
-        const [name, rest = ''] = s.split(':')
-        const sets = rest.match(/(\d+)×/)?.[1] || ''
-        const reps = rest.match(/×(\d+)/)?.[1] || ''
-        return { name: name.trim(), sets, reps, weight: '' }
-      })
-    }
-
     navigation.navigate('Log' as never, { entry } as never)
   }
 
@@ -96,10 +116,24 @@ export default function SmartWorkout() {
     if (!prompt.trim()) return
     setLoading(true)
     try {
-      if (view === 'Workout') setWorkout(await generateWorkout(prompt))
-      else if (view === 'Schedule') setSchedule(await generateSchedule(prompt))
-      else setNutrition(await generateNutrition(prompt))
-    } catch {
+      setError('')
+      if (view === 'Workout') {
+        const result = await generateWorkout(prompt)
+        setWorkout(result)
+      } else if (view === 'Schedule') {
+        const raw = await generateSchedule(prompt)
+        const sanitized = (Array.isArray(raw) ? raw : []).map((day: any) => ({
+          date: typeof day.date === 'string' ? day.date : '',
+          warmUp: Array.isArray(day.warmUp) ? day.warmUp : [],
+          mainSet: Array.isArray(day.mainSet) ? day.mainSet : [],
+          coolDown: Array.isArray(day.coolDown) ? day.coolDown : [],
+        }))
+        setSchedule(sanitized)
+      } else {
+        const result = await generateNutrition(prompt)
+        setNutrition(result)
+      }
+    } catch (e) {
       setError('Could not generate—try again.')
     } finally {
       setLoading(false)
@@ -156,11 +190,15 @@ export default function SmartWorkout() {
           {workout && (
             <View style={styles.resultCard}>
               <Text style={styles.resultTitle}>Warm-up</Text>
-              {workout.warmUp.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+              {workout.warmUp?.map((ex, i) => <Text key={i} style={styles.resultText}>• {ex}</Text>)}
               <Text style={styles.resultTitle}>Main Set</Text>
-              {workout.mainSet.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+              {workout.mainSet?.map((ex, i) => <Text key={i} style={styles.resultText}>• {ex}</Text>)}
               <Text style={styles.resultTitle}>Cool Down</Text>
-              {workout.coolDown.map((ex, idx) => <Text key={idx} style={styles.resultText}>• {ex}</Text>)}
+              {workout.coolDown?.map((ex, i) => <Text key={i} style={styles.resultText}>• {ex}</Text>)}
+
+              <TouchableOpacity onPress={importQuickWorkoutToLog} style={{ marginTop: 12 }}>
+                <Text style={{ color: '#4A6C6F', fontWeight: '600' }}>+ Import to Log</Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -168,10 +206,19 @@ export default function SmartWorkout() {
             <View style={styles.resultCard}>
               {schedule.map((day, idx) => (
                 <View key={idx} style={styles.scheduleBlock}>
-                  <Text style={styles.resultTitle}>{format(parseISO(day.date), 'EEEE, dd MMM')}</Text>
-                  {day.mainSet.map((ex, i) => (
-                    <Text key={i} style={styles.resultText}>• {ex}</Text>
-                  ))}
+                  <Text style={styles.resultTitle}>{parseFlexibleDate(day.date)}</Text>
+                  {day.warmUp.length + day.mainSet.length + day.coolDown.length === 0 ? (
+                    <Text style={styles.resultText}>No workout set</Text>
+                  ) : (
+                    <>
+                      {day.warmUp.map((ex, i) => <Text key={`wu-${i}`} style={styles.resultText}>• Warm-up: {ex}</Text>)}
+                      {day.mainSet.map((ex, i) => <Text key={`ms-${i}`} style={styles.resultText}>• Main: {ex}</Text>)}
+                      {day.coolDown.map((ex, i) => <Text key={`cd-${i}`} style={styles.resultText}>• Cool-down: {ex}</Text>)}
+                      <TouchableOpacity onPress={() => importToLog(day)} style={{ marginTop: 6 }}>
+                        <Text style={{ color: '#4A6C6F', fontWeight: '600' }}>+ Import to Log</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               ))}
             </View>
@@ -206,44 +253,25 @@ const styles = StyleSheet.create({
     borderColor: '#E5E5E5',
     color: '#1A1A1A',
     fontSize: 16,
-    marginBottom: 12
+    marginBottom: 12,
   },
   gradientButton: {
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 20
+    marginBottom: 20,
   },
-  submitText: {
-    color: '#FFF',
-    fontWeight: '600',
-    fontSize: 16
-  },
-  error: {
-    color: '#B85C5C',
-    textAlign: 'center',
-    marginBottom: 12
-  },
+  submitText: { color: '#FFF', fontWeight: '600', fontSize: 16 },
+  error: { color: '#B85C5C', textAlign: 'center', marginBottom: 12 },
   resultCard: {
     backgroundColor: '#FFF',
     padding: 16,
     borderRadius: 16,
     borderColor: '#EEE',
     borderWidth: 1,
-    marginBottom: 20
+    marginBottom: 20,
   },
-  resultTitle: {
-    fontWeight: '700',
-    fontSize: 16,
-    marginBottom: 8,
-    color: '#1A1A1A'
-  },
-  resultText: {
-    fontSize: 14,
-    color: '#333',
-    marginBottom: 6
-  },
-  scheduleBlock: {
-    marginBottom: 16
-  }
+  resultTitle: { fontWeight: '700', fontSize: 16, marginBottom: 8, color: '#1A1A1A' },
+  resultText: { fontSize: 14, color: '#333', marginBottom: 6 },
+  scheduleBlock: { marginBottom: 16 },
 })

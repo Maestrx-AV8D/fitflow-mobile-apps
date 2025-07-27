@@ -1,213 +1,4 @@
-// // src/screens/Dashboard.tsx
-// import React, { useEffect, useState } from 'react'
-// import {
-//   ScrollView,
-//   View,
-//   Text,
-//   StyleSheet,
-//   TouchableOpacity,
-//   Dimensions,
-// } from 'react-native'
-// import { MaterialIcons } from '@expo/vector-icons'
-// import { useNavigation } from '@react-navigation/native'
-
-// import WeeklyWorkoutsChart from '../components/WeeklyWorkoutChart'
-// import {
-//   getUserName,
-//   getEntryCount,
-//   getExercisesCompleted,
-//   getLatestWorkoutDate,
-//   getLast7DaysWorkouts,
-//   supabase,
-// } from '../lib/api'
-// import { format } from 'date-fns'
-
-// export default function Dashboard() {
-//   const [name, setName] = useState('')
-//   const [totalWorkouts, setTotalWorkouts] = useState(0)
-//   const [exercisesCompleted, setExercisesCompleted] = useState(0)
-//   const [latestWorkout, setLatestWorkout] = useState('—')
-//   const [chartData, setChartData] = useState<any[]>([])
-//   const nav = useNavigation()
-
-//   useEffect(() => {
-//   ;(async () => {
-//     setName(await getUserName())
-//     setTotalWorkouts(await getEntryCount())
-//     setExercisesCompleted(await getExercisesCompleted())
-//     const latest = await getLatestWorkoutDate()
-//     setLatestWorkout(latest ? format(new Date(latest), 'dd/MM/yyyy') : '—')
-//     setChartData(await getLast7DaysWorkouts())
-//   })()
-// }, [])
-
-// async function handleFinish({ experience, goals, equipment }: OnboardValues) {
-//   const { error } = await supabase
-//     .from('profiles_onboarding')
-//     .upsert({
-//       user_id: supabase.auth.user()?.id,
-//       experience,
-//       goals,
-//       equipment,
-//     });
-//   if (error) throw error;
-//   // mark locally so we skip onboarding next launch
-//   navigation.replace('Main');
-// }
-//   const CARD_MARGIN = 8
-//   const PADDING = 16
-//   const { width } = Dimensions.get('window')
-//   const twoCardWidth = (width - PADDING * 2 - CARD_MARGIN) / 2
-
-//   return (
-//     <View style={styles.screen}>
-//       <ScrollView contentContainerStyle={styles.container}>
-//         <Text style={styles.branding}>FitFlow</Text>
-//         <Text style={styles.greeting}>Welcome, {name}!</Text>
-
-//         <View style={styles.statsRow}>
-//           <View style={[styles.statCard, { backgroundColor: '#7F00FF'}]}>
-//             <Text style={styles.statLabel}>Workouts Logged</Text>
-//             <Text style={styles.statValue}>{totalWorkouts}</Text>
-//           </View>
-//           <View style={[styles.statCard, { backgroundColor: '#00BFA6'}]}>
-//             <Text style={styles.statLabel}>Exercises Completed</Text>
-//             <Text style={styles.statValue}>{exercisesCompleted}</Text>
-//           </View>
-//           <View style={[styles.statCard, { backgroundColor: '#FFB300'}]}>
-//             <Text style={styles.statLabel}>Latest Workout</Text>
-//             <Text style={styles.statValue}>{latestWorkout}</Text>
-//           </View>
-//         </View>
-
-//         <View style={styles.actionsRow}>
-//           <TouchableOpacity
-//             style={[styles.actionButton, { backgroundColor: '#3F3A52' }]}
-//             onPress={() => nav.navigate('Log' as never)}
-//           >
-//             <Text style={styles.actionText}>Log a Workout</Text>
-//           </TouchableOpacity>
-//           <TouchableOpacity
-//             style={[styles.actionButton, { backgroundColor: '#3F3A52' }]}
-//             onPress={() => nav.navigate('Coach' as never)}
-//           >
-//             <Text style={styles.actionText}>Generate Workout Plan</Text>
-//           </TouchableOpacity>
-//         </View>
-
-//         <View style={styles.chartWrapper}>
-//           <Text style={styles.sectionTitle}>Workouts This Week</Text>
-//           <WeeklyWorkoutsChart data={chartData} />
-//         </View>
-//       </ScrollView>
-
-//       <TouchableOpacity
-//         style={styles.fab}
-//         onPress={() => nav.navigate('Log' as never)}
-//       >
-//         <MaterialIcons name="add" size={28} color="#FFFFFF" />
-//       </TouchableOpacity>
-//     </View>
-//   )
-// }
-
-// const styles = StyleSheet.create({
-//   screen: {
-//     flex: 1,
-//     backgroundColor: '#0E0C15',
-//   },
-//   container: {
-//     padding: 16,
-//     paddingTop: 70,
-//     paddingBottom: 100,
-//   },
-//   branding: {
-//     fontSize: 32,
-//     fontWeight: '700',
-//     color: '#AC6AFF',
-//     marginBottom: 8,
-//   },
-//   greeting: {
-//     fontSize: 24,
-//     fontWeight: '600',
-//     color: '#FFFFFF',
-//     marginBottom: 16,
-//   },
-//   statsRow: {
-//     flexDirection: 'column',
-//     // flexWrap: 'wrap',
-//     // justifyContent: 'space-between',
-//     marginBottom: 24,
-//   },
-//   statCard: {
-//     width: '100%',
-//     borderRadius: 12,
-//     padding: 16,
-//     marginBottom: 8,
-//     shadowColor: '#000',
-//     shadowOpacity: 0.2,
-//     shadowRadius: 4,
-//     elevation: 3,
-//   },
-//   statLabel: {
-//     color: '#CAC6DD',
-//     fontSize: 12,
-//     textTransform: 'uppercase',
-//     marginBottom: 8,
-//   },
-//   statValue: {
-//     color: '#FFFFFF',
-//     fontSize: 28,
-//     fontWeight: '700',
-//   },
-//   actionsRow: {
-//     flexDirection: 'row',
-//     justifyContent: 'space-between',
-//     marginBottom: 24,
-//   },
-//   actionButton: {
-//     flex: 1,
-//     marginHorizontal: 4,
-//     paddingVertical: 12,
-//     borderRadius: 12,
-//     alignItems: 'center',
-//   },
-//   actionText: {
-//     color: '#FFFFFF',
-//     fontSize: 16,
-//     fontWeight: '600',
-//   },
-//   chartWrapper: {
-//     backgroundColor: '#15131D',
-//     borderRadius: 24,
-//     padding: 16,
-//     shadowColor: '#000',
-//     shadowOpacity: 0.2,
-//     shadowRadius: 6,
-//     elevation: 4,
-//     marginBottom: 24,
-//   },
-//   sectionTitle: {
-//     fontSize: 18,
-//     fontWeight: '600',
-//     color: '#FFFFFF',
-//     marginBottom: 12,
-//   },
-//   fab: {
-//     position: 'absolute',
-//     bottom: 24,
-//     right: 24,
-//     backgroundColor: '#AC6AFF',
-//     borderRadius: 32,
-//     padding: 12,
-//     shadowColor: '#000',
-//     shadowOpacity: 0.3,
-//     shadowRadius: 6,
-//     elevation: 5,
-//   },
-// })
-
-// src/screens/Dashboard.tsx
+// === Dashboard.tsx ===
 import React, { useEffect, useState, useRef } from 'react'
 import {
   ScrollView,
@@ -215,7 +6,8 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList
+  FlatList,
+  Dimensions
 } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import {
@@ -228,8 +20,7 @@ import {
   differenceInSeconds,
   subDays
 } from 'date-fns'
-import { MaterialIcons } from '@expo/vector-icons'
-import { Ionicons } from '@expo/vector-icons'
+import { MaterialIcons, Ionicons } from '@expo/vector-icons'
 
 import WeeklyWorkoutsChart from '../components/WeeklyWorkoutChart'
 import {
@@ -241,6 +32,8 @@ import {
   supabase
 } from '../lib/api'
 import { useTheme } from '../theme/theme'
+
+const { width } = Dimensions.get('window')
 
 export default function Dashboard() {
   const { colors, spacing, typography } = useTheme()
@@ -261,7 +54,6 @@ export default function Dashboard() {
     ;(async () => {
       const userName = await getUserName()
       setName(userName)
-
       setTotalWorkouts(await getEntryCount())
       setExercisesCompleted(await getExercisesCompleted())
       const latest = await getLatestWorkoutDate()
@@ -303,13 +95,7 @@ export default function Dashboard() {
       .gte('created_at', start.toISOString())
       .lte('created_at', end.toISOString())
 
-    if (error) {
-      console.error('Fetch error:', error)
-      setDaySummary('')
-      return
-    }
-
-    if (!data || data.length === 0) {
+    if (error || !data || data.length === 0) {
       setDaySummary('')
       return
     }
@@ -334,13 +120,13 @@ export default function Dashboard() {
       const end = new Date(dayCursor)
       end.setHours(23, 59, 59, 999)
 
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('workouts')
         .select('id')
         .gte('created_at', start.toISOString())
         .lte('created_at', end.toISOString())
 
-      if (error || !data || data.length === 0) break
+      if (!data || data.length === 0) break
 
       streak += 1
       dayCursor = subDays(dayCursor, 1)
@@ -357,18 +143,61 @@ export default function Dashboard() {
 
   const getTimeGreeting = () => {
     const hour = new Date().getHours()
-    const base =
-      hour < 12
-        ? 'good morning'
-        : hour < 18
-        ? 'good afternoon'
-        : 'good evening'
+    const base = hour < 12 ? 'good morning' : hour < 18 ? 'good afternoon' : 'good evening'
     return name ? `${base}, ${name}!` : `${base}.`
   }
 
-  const handleDatePress = (date: Date) => {
-    setSelectedDate(date)
-  }
+  const handleDatePress = (date: Date) => setSelectedDate(date)
+
+  const inspirations = [
+    {
+      id: '1',
+      title: 'GET INSPIRED',
+      content: 'Who matches your adventurous spirit?',
+      cta: 'Write it Out',
+      icon: '💡',
+      author: null
+    },
+    {
+      id: '2',
+      title: 'GET INSPIRED',
+      content: 'Everybody is talented because everybody who is human has something to express.',
+      cta: 'Reflect on It',
+      icon: '“',
+      author: 'Brenda Ueland'
+    }
+  ]
+
+  const renderInspirationCarousel = () => (
+    <View>
+      <FlatList
+        data={inspirations}
+        horizontal
+        keyExtractor={(item) => item.id}
+        showsHorizontalScrollIndicator={false}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        snapToInterval={width * 0.8 + 16}
+        contentContainerStyle={{ paddingLeft: 4, marginBottom: 32 }}
+        renderItem={({ item }) => (
+          <View style={[styles.inspirationCard, { backgroundColor: colors.surface }]}>
+
+            <Text style={[typography.h3, { color: colors.textPrimary, marginBottom: 8, textAlign: 'center'}]}>
+              {item.content}
+            </Text>
+            {item.author && (
+              <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 12, textAlign: 'center' }}>
+                {item.author}
+              </Text>
+            )}
+            <TouchableOpacity style={[styles.ctaButton, { backgroundColor: colors.card }]}>
+              <Text style={{ fontWeight: '600', color: colors.textPrimary }}>{item.cta}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      />
+    </View>
+  )
 
   const renderDateContent = () => {
     const now = new Date()
@@ -491,6 +320,16 @@ export default function Dashboard() {
           </Text>
           <WeeklyWorkoutsChart data={chartData} />
         </View>
+        <Text style={{
+                  color:  colors.textSecondary,
+                  fontWeight: '700' ,
+                  fontSize: 16,
+                  textAlign: 'center',
+                  marginBottom: 15
+                }}>
+                  Get Inspired
+                </Text>
+        {renderInspirationCarousel()}
       </ScrollView>
 
       <TouchableOpacity
@@ -513,14 +352,55 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center'
   },
-  streakBox: {
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
+  streakBox: { flexDirection: 'row', alignItems: 'center' },
   dateStrip: { flexDirection: 'row', marginBottom: 24 },
-  dateItem: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, marginRight: 8 },
-  card: { padding: 24, borderRadius: 20, marginBottom: 24, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 3 },
-  ctaButton: { alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 999 },
-  chartWrapper: { padding: 16, borderRadius: 16, backgroundColor: '#15131D' },
-  fab: { position: 'absolute', right: 24, bottom: 24, padding: 16, borderRadius: 999, elevation: 4, shadowColor: '#000', shadowOpacity: 0.2 },
+  dateItem: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginRight: 8
+  },
+  card: {
+    padding: 24,
+    borderRadius: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3
+  },
+  inspirationCard: {
+    width: width * 0.8,
+    padding: 24,
+    borderRadius: 20,
+    marginRight: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2
+  },
+  ctaButton: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 999
+  },
+  chartWrapper: {
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#15131D',
+    marginBottom: 50,
+    marginTop: 25
+  },
+  fab: {
+    position: 'absolute',
+    right: 24,
+    bottom: 24,
+    padding: 16,
+    borderRadius: 999,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.2
+  }
 })

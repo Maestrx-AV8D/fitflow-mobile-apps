@@ -20,6 +20,7 @@ import SmartWorkout from '../screens/SmartWorkout'
 import { useTheme } from '../theme/theme'
 import MainStack from './MainStack'
 import { navigationRef } from './navigationRef'
+import Log from '../screens/Log'
 
 const Stack = createNativeStackNavigator()
 const Tabs  = createBottomTabNavigator()
@@ -109,6 +110,7 @@ function MainTabs() {
           }}
         />
         <Tabs.Screen name="Coach" component={SmartWorkout} options={{ tabBarLabel: 'Coach' }} />  
+        <Tabs.Screen name="Log" component={Log} options={{ tabBarLabel: 'Log' }} />  
          <Tabs.Screen name="History" component={History} options={{ tabBarLabel: 'History' }} />
       </Tabs.Navigator>
 
@@ -131,7 +133,7 @@ export default function AppNavigator() {
         
         <Stack.Screen name="Main" component={MainTabs} />
 
-      ) : hasOnboarded ? (
+      ) : !hasOnboarded ? (
         <Stack.Screen name="SignIn" component={SignIn} />
       ) : (
         <Stack.Screen name="Onboarding" component={Onboarding} />
