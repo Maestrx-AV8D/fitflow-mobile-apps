@@ -7,7 +7,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Alert
+  Alert,
+  Linking
 } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useNavigation } from '@react-navigation/native'
@@ -26,7 +27,7 @@ export default function Profile() {
   const [editing, setEditing] = useState(false)
 
   useEffect(() => {
-    ;(async () => {
+    (async () => {
       const data = await getProfile()
       if (data) {
         setForm(data)
@@ -38,33 +39,31 @@ export default function Profile() {
     })()
   }, [])
 
-  const handleSave = async () => {
-    setLoading(true)
-    try {
-      await saveProfile(form)
-      setEditing(false)
-    } catch (e: any) {
-      Alert.alert('Error', e.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleLogout = async () => {
     await supabase.auth.signOut()
     navigation.replace('Signin')
   }
 
-  const GradientButton = ({ text, onPress, style = {} }: any) => (
+  const openLink = (url: string) => {
+    Linking.openURL(url).catch(err => Alert.alert('Failed to open link', err.message))
+  }
+
+  const GradientButton = ({ text, onPress, style = {}, white = false }: any) => (
     <TouchableOpacity onPress={onPress} style={[styles.gradientWrapper, style]}>
-      <LinearGradient
-        colors={['#1C1B23', '#000']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.button}
-      >
-        <Text style={styles.buttonText}>{text}</Text>
-      </LinearGradient>
+      {!white ? (
+        <LinearGradient
+          colors={['#1C1B23', '#000']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.button}
+        >
+          <Text style={styles.buttonText}>{text}</Text>
+        </LinearGradient>
+      ) : (
+        <View style={[styles.button, { backgroundColor: '#FFF' }]}>
+          <Text style={[styles.buttonText, { color: '#000' }]}>{text}</Text>
+        </View>
+      )}
     </TouchableOpacity>
   )
 
@@ -77,67 +76,119 @@ export default function Profile() {
   }
 
   return (
-    <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Your Profile</Text>
+    <View style={styles.modalBackdrop}>
+      <View style={styles.screen}>
+        <ScrollView contentContainerStyle={styles.container}>
+          <View style={styles.modalCard}>
+            <TouchableOpacity
+              style={{ position: 'absolute', top: 16, right: 16, zIndex: 999 }}
+              onPress={() => navigation.goBack()}
+            >
+              <Text style={{ fontSize: 24 }}>✕</Text>
+            </TouchableOpacity>
 
-        {editing ? (
-          <>
-            {(['fullName', 'age', 'gender', 'height', 'weight'] as const).map(key => (
-              <View key={key} style={styles.formGroup}>
-                <Text style={styles.label}>
-                  {key === 'fullName'
-                    ? 'Full Name'
-                    : key === 'age'
-                    ? 'Age'
-                    : key === 'gender'
-                    ? 'Gender'
-                    : key === 'height'
-                    ? 'Height (cm)'
-                    : 'Weight (kg)'}
-                </Text>
-                <TextInput
-                  value={form[key]}
-                  onChangeText={v => setForm(f => ({ ...f, [key]: v }))}
-                  style={styles.input}
-                  keyboardType={key !== 'gender' && key !== 'fullName' ? 'numeric' : 'default'}
-                  placeholder={
-                    key === 'gender' ? 'male / female / other' : key === 'fullName' ? 'Your name' : undefined
-                  }
-                  placeholderTextColor="#757575"
-                />
-              </View>
-            ))}
-            <GradientButton text="Save Profile" onPress={handleSave} />
-          </>
-        ) : (
-          <View style={styles.profileCard}>
-            <Text style={styles.item}>👤 Name: {form.fullName}</Text>
-            <Text style={styles.item}>🎂 Age: {form.age}</Text>
-            <Text style={styles.item}>⚧ Gender: {form.gender}</Text>
-            <Text style={styles.item}>📏 Height: {form.height} cm</Text>
-            <Text style={styles.item}>⚖️ Weight: {form.weight} kg</Text>
+            <Text style={styles.title}>Profile</Text>
 
-            <View style={styles.actionsRow}>
-              <GradientButton text="Edit" onPress={() => setEditing(true)} style={{ flex: 1, marginRight: 8 }} />
-              <GradientButton text="Log Out" onPress={handleLogout} style={{ flex: 1, marginLeft: 8 }} />
+            <LinearGradient
+              colors={['#111', '#000']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.premiumBox}
+            >
+              <Text style={styles.premiumText}>
+                Unlock full access to FitFlow: smart workouts, AI coaching, sync across devices, and more.
+              </Text>
+              <GradientButton text="Try 3 Days for Free" onPress={() => Alert.alert('Coming Soon')} white />
+            </LinearGradient>
+
+            {/* Account */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Account</Text>
+              <TouchableOpacity style={styles.linkItem} onPress={() => navigation.navigate('YourData')}>
+                <Text style={styles.linkText}>Your Data</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.linkItem}
+                onPress={() => Alert.alert('Coming Soon', 'Notification preferences coming soon.')}
+              >
+                <Text style={styles.linkText}>Notifications</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.linkItem}
+                onPress={() =>
+                  Alert.alert(
+                    'About Premium',
+                    'Premium includes full access to FitFlow AI, unlimited logs, and iCloud sync.'
+                  )
+                }
+              >
+                <Text style={styles.linkText}>About Premium</Text>
+              </TouchableOpacity>
             </View>
+
+            {/* Personalisation */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Personalisation</Text>
+              <TouchableOpacity style={styles.linkItem} onPress={() => navigation.navigate('Checkin')}>
+                <Text style={styles.linkText}>Preferences</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.linkItem} onPress={() => navigation.navigate('Onboarding')}>
+                <Text style={styles.linkText}>Appearance</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Support */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Help & Support</Text>
+              <TouchableOpacity style={styles.linkItem} onPress={() => openLink('https://fitflow.help')}>
+                <Text style={styles.linkText}>FAQ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.linkItem} onPress={() => openLink('mailto:support@fitflow.app')}>
+                <Text style={styles.linkText}>Report a Bug</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.linkItem} onPress={() => openLink('https://fitflow.app/suggest')}>
+                <Text style={styles.linkText}>Suggest a Feature</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Application */}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Application</Text>
+              <TouchableOpacity style={styles.linkItem} onPress={() => navigation.navigate('Widgets')}>
+                <Text style={styles.linkText}>Widgets</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.linkItem} onPress={() => openLink('https://fitflow.app/privacy')}>
+                <Text style={styles.linkText}>Privacy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.linkItem} onPress={() => openLink('https://fitflow.app/terms')}>
+                <Text style={styles.linkText}>Terms of Service</Text>
+              </TouchableOpacity>
+            </View>
+
+            <GradientButton text="Log Out" onPress={handleLogout} style={{ marginTop: 24 }} />
+
+            <Text style={styles.version}>FitFlow v2025.1</Text>
           </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'flex-end'
+  },
   screen: {
     flex: 1,
     backgroundColor: '#FDFCF9'
   },
   container: {
     padding: 16,
-    paddingTop: 70,
-    paddingBottom: 100,
+    paddingTop: 40,
+    paddingBottom: 80,
     backgroundColor: '#FDFCF9',
     flexGrow: 1
   },
@@ -147,44 +198,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FDFCF9'
   },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    marginTop: 20
+  },
   title: {
-    fontSize: 28,
+    fontSize: 36,
     fontWeight: '700',
     color: '#000',
-    textAlign: 'center',
+    textAlign: 'left',
     marginBottom: 24
-  },
-  formGroup: {
-    marginBottom: 16
-  },
-  label: {
-    color: '#1A1A1A',
-    marginBottom: 6,
-    fontSize: 14
-  },
-  input: {
-    backgroundColor: '#F2F2F2',
-    borderRadius: 8,
-    padding: 12,
-    color: '#1A1A1A'
-  },
-  profileCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2
-  },
-  item: {
-    color: '#1A1A1A',
-    fontSize: 16,
-    marginBottom: 10
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    marginTop: 24
   },
   gradientWrapper: {
     borderRadius: 8,
@@ -196,8 +222,54 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   buttonText: {
-    color: '#FFFFFF',
     fontWeight: '600',
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#FFFFFF'
+  },
+  premiumBox: {
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 260,
+    overflow: 'hidden'
+  },
+  premiumText: {
+    color: '#fff',
+    fontSize: 16,
+    marginBottom: 30,
+    fontWeight: '500',
+    textAlign: 'center'
+  },
+  sectionTitle: {
+    fontSize: 14,
+    color: '#5E5E5E',
+    textTransform: 'uppercase',
+    marginBottom: 12
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2
+  },
+  linkItem: {
+    paddingVertical: 12
+  },
+  linkText: {
+    color: '#1A1A1A',
     fontSize: 16
+  },
+  version: {
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 13,
+    color: '#A0A0A0'
   }
 })

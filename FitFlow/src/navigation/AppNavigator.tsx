@@ -21,6 +21,7 @@ import { useTheme } from '../theme/theme'
 import MainStack from './MainStack'
 import { navigationRef } from './navigationRef'
 import Log from '../screens/Log'
+import Profile from '../screens/Profile'
 
 const Stack = createNativeStackNavigator()
 const Tabs  = createBottomTabNavigator()
@@ -126,21 +127,56 @@ export default function AppNavigator() {
 
   if (loading) return null
 
+  // return (
+  //   <NavigationContainer theme={scheme === 'dark' ? DarkTheme : DefaultTheme} ref={navigationRef}>
+  //     <Stack.Navigator screenOptions={{ headerShown: false }}>
+  //     {user ? (
+  //     <> 
+  //       <Stack.Screen name="Main" component={MainTabs} />
+  //       <Stack.Screen
+  //         name="Profile"
+  //         component={Profile}
+  //         options={{
+  //           presentation: 'modal',
+  //           headerShown: false,
+  //           gestureDirection: 'vertical',
+  //        }}
+  //      />
+  //    </>
+  //     ) : hasOnboarded ? (
+  //       <Stack.Screen name="SignIn" component={SignIn} />
+  //     ) : (
+  //       <Stack.Screen name="Onboarding" component={Onboarding} />
+  //     )}
+  //   </Stack.Navigator>
+  //   </NavigationContainer>
+  // )
   return (
-    <NavigationContainer theme={scheme === 'dark' ? DarkTheme : DefaultTheme} ref={navigationRef}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+  <NavigationContainer theme={scheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
       {user ? (
-        
-        <Stack.Screen name="Main" component={MainTabs} />
-
-      ) : !hasOnboarded ? (
+        <>
+          <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen
+            name="Profile"
+            component={Profile}
+            options={{
+              presentation: 'transparentmodal',
+              gestureEnabled: true,
+              gestureDirection: 'vertical',
+              headerShown: false,
+              cardStyle: {backgroundColor: 'transparent'}
+            }}
+          />
+        </>
+      ) : hasOnboarded ? (
         <Stack.Screen name="SignIn" component={SignIn} />
       ) : (
         <Stack.Screen name="Onboarding" component={Onboarding} />
       )}
     </Stack.Navigator>
-    </NavigationContainer>
-  )
+  </NavigationContainer>
+)
 }
 
 const styles = StyleSheet.create({
