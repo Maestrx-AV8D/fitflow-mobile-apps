@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../hooks/useAuth';
 
 const steps = ['Welcome', 'Experience', 'Goals', 'Age'] as const;
@@ -24,6 +25,7 @@ type AgeRange =
   | 'Over 64';
 
 export default function Onboarding() {
+  const navigation = useNavigation<any>();
   const { setHasOnboarded } = useAuth();
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
@@ -50,6 +52,7 @@ export default function Onboarding() {
   const skipToDashboard = async () => {
     await AsyncStorage.setItem('hasOnboarded', 'true');
     setHasOnboarded(true);
+    navigation.replace('Signin');
   };
 
   const canNext = () => {
