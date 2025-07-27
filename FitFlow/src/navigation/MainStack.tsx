@@ -10,7 +10,6 @@ export default function MainStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Dashboard" component={Dashboard} />
-       <Stack.Screen name="Log" component={Log} />
        <Stack.Screen name="Profile" component={Profile} />
     </Stack.Navigator>
   )
