@@ -3,8 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { format, subDays } from 'date-fns'
 import Constants from 'expo-constants'
-import { getCurrentUser } from './getCurrentUser'
-
 
 // 1) initialize Supabase
 const SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL as string
@@ -15,6 +13,14 @@ if (!match) throw new Error('Invalid SUPABASE_URL')
 const PROJECT_REF = match[1]
 
 // ————————————————————————————————————————————————————————————————————————————————
+
+
+
+export async function getCurrentUser() {
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error) throw error
+  return user
+}
 // Auth & Profile
 export async function signIn(email: string, password: string) {
   const { error, data } = await supabase.auth.signInWithPassword({

@@ -800,7 +800,6 @@ import { supabase } from '../lib/api'
 import { useTheme } from '../theme/theme'
 
 const FASTING_TYPES = [
-  { label: 'TEST 2min', fastingHours: 0.033, eatingHours: 23.967 },
   { label: '16:8', fastingHours: 16, eatingHours: 8 },
   { label: '18:6', fastingHours: 18, eatingHours: 6 },
   { label: '20:4', fastingHours: 20, eatingHours: 4 },

@@ -1,27 +1,22 @@
-// src/components/WeeklyWorkoutChart.tsx
-import React from 'react'
-import { View, Text, Dimensions, StyleSheet } from 'react-native'
-import { BarChart } from 'react-native-chart-kit'
-import { format, parseISO, isValid } from 'date-fns'
+import React from 'react';
+import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { BarChart } from 'react-native-chart-kit';
 
-type DayData = { date?: string; workouts?: number }
+type ActivityDay = { day: string; [activity: string]: number }
 
 interface Props {
-  data?: DayData[]
+  data?: ActivityDay[]
 }
 
 export default function WeeklyWorkoutChart({ data = [] }: Props) {
-  // Filter out entries without a valid ISO date
-  const validData = data.filter(d => {
-    const dt = d.date ? parseISO(d.date) : null
-    return dt instanceof Date && isValid(dt) && typeof d.workouts === 'number'
+  const screenWidth = Dimensions.get('window').width - 55
+  // Prepare labels and values
+  const labels = data.map(d => d.day)
+  const values = data.map(d => {
+    const { day, ...rest } = d
+    return Object.values(rest).reduce((sum, val) => sum + val, 0)
   })
 
-  // Prepare labels and datasets
-  const labels = validData.map(d => format(parseISO(d.date!), 'dd/MM'))
-  const values = validData.map(d => d.workouts!)
-
-  // Chart config
   const chartConfig = {
     backgroundColor: '#0E0C15',
     backgroundGradientFrom: '#15131D',
@@ -33,11 +28,9 @@ export default function WeeklyWorkoutChart({ data = [] }: Props) {
     propsForBackgroundLines: { stroke: '#2E2A41' },
   }
 
-  const screenWidth = Dimensions.get('window').width - 32
-
   return (
     <View style={styles.container}>
-      {validData.length > 0 ? (
+      {data.length > 0 ? (
         <BarChart
           data={{
             labels,
@@ -65,7 +58,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   chart: {
-    borderRadius: 12,
+    borderRadius: 6,
+    marginLeft: -8
   },
   emptyContainer: {
     height: 200,

@@ -1,6 +1,6 @@
-// src/screens/Log.tsx
 import { Picker } from '@react-native-picker/picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useState } from 'react';
 import {
   Alert,
@@ -15,14 +15,16 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/api';
+import { useTheme } from '../theme/theme';
+
 
 type Exercise = { name: string; sets: string; reps: string; weight: string };
 
 export default function Log() {
   const navigation = useNavigation();
   const route = useRoute();
+  const { colors, typography } = useTheme();
   const entryToEdit = (route.params as any)?.entry;
 
   const [date, setDate] = useState(
@@ -64,8 +66,19 @@ export default function Log() {
   const handleSubmit = async () => {
     setLoading(true);
     const isoDate = date.split('/').reverse().join('-');
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (!user || userError) {
+      Alert.alert('Error', 'User not found.');
+      setLoading(false);
+      return;
+    }
+
     const payload: any = {
-      user_id: (await supabase.auth.getUser()).data.user?.id,
+      user_id: user.id,
       date: isoDate,
       type,
       notes,
@@ -89,10 +102,7 @@ export default function Log() {
 
     let res;
     if (entryToEdit?.id) {
-      res = await supabase
-        .from('entries')
-        .update(payload)
-        .eq('id', entryToEdit.id);
+      res = await supabase.from('entries').update(payload).eq('id', entryToEdit.id);
     } else {
       res = await supabase.from('entries').insert([payload]);
     }
@@ -106,113 +116,108 @@ export default function Log() {
   };
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.container}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             keyboardVerticalOffset={80}
           >
-            <Text style={styles.title}>
+            <Text style={[typography.h2, { marginBottom: 16, color: colors.textPrimary }]}> 
               {entryToEdit ? 'Edit Activity' : 'Log Activity'}
             </Text>
 
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Date</Text>
-              <TextInput value={date} onChangeText={setDate} style={styles.input} />
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Date</Text>
+              <TextInput
+                value={date}
+                onChangeText={setDate}
+                style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
+              />
             </View>
 
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Activity Type</Text>
-              <View style={styles.pickerWrapper}>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Activity Type</Text>
+              <View style={[styles.pickerWrapper, { backgroundColor: colors.inputBackground }]}>
                 <Picker
                   selectedValue={type}
                   onValueChange={(v) => setType(v)}
-                  style={styles.picker}
-                  dropdownIconColor="#FFF"
+                  style={[styles.picker, { color: colors.textPrimary }]}
+                  dropdownIconColor={colors.textPrimary}
                   mode="dropdown"
-                  itemStyle={{
-                    color: '#FFF',
-                    backgroundColor: '#2E2A41',
-                    fontSize: 16,
-                  }}
                 >
-                  {['Run', 'Gym', 'Swim', 'Cycle', 'Other'].map((cat) => (
-                    <Picker.Item key={cat} label={cat} value={cat} />
+                  {['Run', 'Walk', 'Cycle', 'Gym', 'Swim', 'Other'].map((cat) => (
+                    <Picker.Item key={cat} label={cat} value={cat}/>
                   ))}
                 </Picker>
               </View>
             </View>
 
-            {type === 'Gym' &&
-              exercises.map((ex, idx) => (
-                <View key={idx} style={styles.exerciseBox}>
-                  {idx > 0 && (
-                    <TouchableOpacity
-                      onPress={() => removeExercise(idx)}
-                      style={styles.removeBtn}
-                    >
-                      <Text style={{ color: '#f66' }}>✕</Text>
-                    </TouchableOpacity>
-                  )}
-                  <Text style={styles.subTitle}>Exercise #{idx + 1}</Text>
-                  <TextInput
-                    placeholder="Name"
-                    placeholderTextColor="#999"
-                    value={ex.name}
-                    onChangeText={(t) => {
-                      const c = [...exercises];
-                      c[idx].name = t;
-                      setExercises(c);
-                    }}
-                    style={styles.input}
-                  />
-                  <View style={styles.row}>
-                    {['sets', 'reps', 'weight'].map((fld, i) => (
-                      <TextInput
-                        key={i}
-                        placeholder={fld.charAt(0).toUpperCase() + fld.slice(1)}
-                        placeholderTextColor="#999"
-                        value={(ex as any)[fld]}
-                        onChangeText={(t) => {
-                          const c = [...exercises];
-                          (c[idx] as any)[fld] = t;
-                          setExercises(c);
-                        }}
-                        keyboardType="numeric"
-                        style={[styles.input, styles.smallInput]}
-                      />
-                    ))}
-                  </View>
+            {type === 'Gym' && exercises.map((ex, idx) => (
+              <View key={idx} style={[styles.exerciseBox, { backgroundColor: colors.inputBackground }]}>
+                {idx > 0 && (
+                  <TouchableOpacity onPress={() => removeExercise(idx)} style={styles.removeBtn}>
+                    <Text style={{ color: colors.error }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+                <Text style={[styles.label, { color: colors.textPrimary }]}>Exercise #{idx + 1}</Text>
+                <TextInput
+                  placeholder="Name"
+                  placeholderTextColor={colors.textSecondary}
+                  value={ex.name}
+                  onChangeText={(t) => {
+                    const c = [...exercises];
+                    c[idx].name = t;
+                    setExercises(c);
+                  }}
+                  style={[styles.input, { backgroundColor: colors.surface, color: colors.textPrimary }]}
+                />
+                <View style={styles.row}>
+                  {['sets', 'reps', 'weight'].map((fld, i) => (
+                    <TextInput
+                      key={i}
+                      placeholder={fld.charAt(0).toUpperCase() + fld.slice(1)}
+                      placeholderTextColor={colors.textSecondary}
+                      value={(ex as any)[fld]}
+                      onChangeText={(t) => {
+                        const c = [...exercises];
+                        (c[idx] as any)[fld] = t;
+                        setExercises(c);
+                      }}
+                      keyboardType="numeric"
+                      style={[styles.input, styles.smallInput, { backgroundColor: colors.surface, color: colors.textPrimary }]}
+                    />
+                  ))}
                 </View>
-              ))}
+              </View>
+            ))}
 
             {type === 'Gym' && (
               <TouchableOpacity onPress={addExercise}>
-                <Text style={styles.addLink}>+ Add Exercise</Text>
+                <Text style={{ color: colors.primary, marginBottom: 12 }}>+ Add Exercise</Text>
               </TouchableOpacity>
             )}
 
             {type !== 'Gym' && type !== 'Swim' && (
               <View style={styles.row}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.label}>Distance</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>Distance</Text>
                   <TextInput
                     placeholder="e.g. 5 km"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={colors.textSecondary}
                     value={distance}
                     onChangeText={setDistance}
-                    style={styles.input}
+                    style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Duration</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>Duration</Text>
                   <TextInput
                     placeholder="e.g. 30 min"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={colors.textSecondary}
                     value={duration}
                     onChangeText={setDuration}
-                    style={styles.input}
+                    style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
                   />
                 </View>
               </View>
@@ -221,44 +226,44 @@ export default function Log() {
             {type === 'Swim' && (
               <View style={styles.row}>
                 <View style={{ flex: 1, marginRight: 8 }}>
-                  <Text style={styles.label}>Laps</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>Laps</Text>
                   <TextInput
                     placeholder="e.g. 20"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={colors.textSecondary}
                     value={laps}
                     onChangeText={setLaps}
                     keyboardType="numeric"
-                    style={styles.input}
+                    style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Time</Text>
+                  <Text style={[styles.label, { color: colors.textSecondary }]}>Time</Text>
                   <TextInput
                     placeholder="e.g. 45 min"
-                    placeholderTextColor="#999"
+                    placeholderTextColor={colors.textSecondary}
                     value={time}
                     onChangeText={setTime}
-                    style={styles.input}
+                    style={[styles.input, { backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
                   />
                 </View>
               </View>
             )}
 
             <View style={styles.formGroup}>
-              <Text style={styles.label}>Notes</Text>
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Notes</Text>
               <TextInput
                 value={notes}
                 onChangeText={setNotes}
                 multiline
                 placeholder="Anything else to log?"
-                placeholderTextColor="#999"
-                style={[styles.input, { height: 80 }]}
+                placeholderTextColor={colors.textSecondary}
+                style={[styles.input, { height: 80, backgroundColor: colors.inputBackground, color: colors.textPrimary }]}
               />
             </View>
 
             <TouchableOpacity onPress={handleSubmit} disabled={loading}>
               <LinearGradient
-                colors={['#7ADB78', '#4A6C6F']}
+                colors={[colors.primary, '#4A6C6F']}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={[styles.btn, loading && styles.btnDisabled]}
@@ -276,46 +281,39 @@ export default function Log() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#0E0C15' },
+  screen: { flex: 1 },
   container: { padding: 16, paddingTop: 70, paddingBottom: 32 },
-  title: { fontSize: 24, fontWeight: '600', color: '#FFF', marginBottom: 16 },
-  formGroup: { marginBottom: 12 },
-  label: { color: '#CAC6DD', marginBottom: 4 },
+  formGroup: { marginBottom: 16 },
+  label: { marginBottom: 4, fontSize: 14, fontWeight: '500' },
   input: {
-    backgroundColor: '#2E2A41',
-    borderRadius: 8,
+    borderRadius: 12,
     padding: 12,
-    color: '#FFF',
+    fontSize: 14,
     marginBottom: 4,
   },
   pickerWrapper: {
-    backgroundColor: '#2E2A41',
-    borderRadius: 8,
+    borderRadius: 12,
     overflow: 'hidden',
   },
   picker: {
-    height: 50,
-    color: '#FFF',
-    backgroundColor: '#2E2A41',
+    height: 150,
+    fontSize: 14,
   },
   exerciseBox: {
-    backgroundColor: '#2E2A41',
+    borderRadius: 12,
     padding: 12,
-    borderRadius: 8,
     marginBottom: 12,
     position: 'relative',
   },
   removeBtn: { position: 'absolute', top: 8, right: 8 },
-  subTitle: { color: '#FFF', fontWeight: '500', marginBottom: 8 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   smallInput: { flex: 1, marginHorizontal: 4 },
-  addLink: { color: '#7ADB78', marginBottom: 12 },
   btn: {
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: 24,
   },
   btnDisabled: { opacity: 0.6 },
-  btnText: { color: '#FFF', fontWeight: '600' },
+  btnText: { color: '#FFF', fontWeight: '600', fontSize: 16 },
 });

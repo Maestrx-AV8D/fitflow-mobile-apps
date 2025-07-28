@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native'
 import { navigationRef } from '../navigation/navigationRef'
+import { MainStackParamList } from '../navigation/types'
 import { useTheme } from '../theme/theme'
 
 const SCREEN_WIDTH = Dimensions.get('window').width
@@ -20,11 +21,16 @@ interface FloatingOverlayProps {
 export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
   const { colors } = useTheme()
 
-  const buttons: { icon: string; label: string; screen: 'Journal' | 'Log' | 'Fasting' }[] = [
-    { icon: 'timer', label: 'Fasting', screen: 'Fasting' },
-    { icon: 'add-circle', label: 'Log', screen: 'Log' },
-    { icon: 'sparkles', label: 'Journal', screen: 'Journal' },  
-  ]
+  const buttons: {
+  icon: string;
+  label: string;
+  screen: keyof MainStackParamList;
+}[] = [
+  { icon: 'timer', label: 'Fasting', screen: 'Fasting' },
+  { icon: 'add-circle', label: 'Log', screen: 'Log' },
+  { icon: 'sparkles', label: 'Journal', screen: 'Journal' },
+];
+
 
   return (
     <>
@@ -41,7 +47,10 @@ export default function FloatingOverlay({ onClose }: FloatingOverlayProps) {
               ]}
               onPress={() => {
                 onClose()
-                navigationRef.current?.navigate(screen)
+                navigationRef.current?.navigate('Home', {
+  screen: screen as keyof MainStackParamList,
+});
+
               }}
             >
               <Ionicons name={icon as any} size={24} color={colors.textPrimary} />

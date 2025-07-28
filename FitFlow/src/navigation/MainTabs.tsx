@@ -17,7 +17,7 @@ export default function MainTabs() {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
   const [fabExpanded, setFabExpanded] = React.useState(false);
-  const { colors, spacing, typography } = useTheme();
+  const { colors, spacing } = useTheme();
 
   return (
     <>
