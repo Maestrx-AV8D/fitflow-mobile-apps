@@ -8,6 +8,7 @@ export type MainStackParamList = {
   Profile: undefined
   YourData: undefined
   Paywall: undefined
+  NotificationSettings: undefined
   
 }
 

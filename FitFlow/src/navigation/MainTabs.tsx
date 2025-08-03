@@ -1,8 +1,7 @@
 // navigation/MainTabs.tsx
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';
-
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 import FloatingOverlay from '../components/FloatingOverlay';
 import History from '../screens/History';
@@ -85,6 +84,7 @@ export default function MainTabs({ navigation }) {
       >
         <Tab.Screen name="Home" component={MainStack} options={{ tabBarLabel: 'Home' }} />
         <Tab.Screen name="Schedule" component={Schedule} options={{ tabBarLabel: 'Schedule' }} />
+        <Tab.Screen name="Theme" component={ThemePreview} options={{ tabBarLabel: 'Theme' }} />
         <Tab.Screen
           name="Star"
           component={View} // hidden placeholder

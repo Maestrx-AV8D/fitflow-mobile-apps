@@ -275,3 +275,19 @@ export async function generateNutrition(prompt: string) {
   const obj = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
   return obj
 }
+
+export async function generateAIInsights(entryText: string, userName: string, userGoals: string) {
+  const systemPrompt = `You are a journaling coach helping ${userName} achieve their goal: "${userGoals}".`;
+  const userPrompt = `Entry: "${entryText}"`;
+
+  const responseText = await chatCompletion(systemPrompt, userPrompt);
+  return responseText;
+}
+
+export async function summarizeMoodAndTags(chatLog: string[]) {
+  const systemPrompt = `You're a mood analysis assistant. Given a journal session log, return plain text summarizing the emotional tone and focus areas. summarise as a personal journal`;
+  const userPrompt = chatLog.join("\n");
+
+  const summary = await chatCompletion(systemPrompt, userPrompt);
+  return summary;
+}

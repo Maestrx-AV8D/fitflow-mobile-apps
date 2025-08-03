@@ -4,6 +4,7 @@ import Dashboard from "../screens/Dashboard";
 import Fasting from "../screens/Fasting";
 import Journal from "../screens/Journal";
 import Log from "../screens/Log";
+import NotificationSettings from "../screens/Notifications";
 import Paywall from "../screens/Premium";
 import Profile from "../screens/Profile";
 import YourData from "../screens/YourData";
@@ -45,6 +46,8 @@ export default function MainStack() {
         component={Paywall}
         options={{ animation: "none" }}
       />
+      <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
+
     </Stack.Navigator>
   );
 }

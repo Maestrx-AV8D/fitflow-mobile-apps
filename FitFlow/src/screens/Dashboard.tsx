@@ -50,7 +50,6 @@ export default function Dashboard() {
   const [daySummary, setDaySummary] = useState<string>("");
   const [streak, setStreak] = useState<number>(0);
 
-
   const isMiddayOnWeekEnd = (date: Date) => {
     const isSunday = date.getDay() === 0; // Sunday = 0, Monday = 1
     const now = new Date();
@@ -94,6 +93,23 @@ export default function Dashboard() {
       await calculateStreak();
     })();
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = nav.addListener("focus", async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("user_id", user?.id)
+        .single();
+      const userName = data?.full_name?.split(" ")[0] || "";
+      setName(userName);
+    });
+
+    return unsubscribe;
+  }, [nav]);
 
   useEffect(() => {
     if (selectedDate) fetchDaySummary();
@@ -159,7 +175,6 @@ export default function Dashboard() {
     );
 
     const personalBests = await fetchPersonalBests(user.id, start);
-    console.log("personal best", personalBests);
 
     let bestDistanceToday = 0;
     let bestDurationToday = 0;
@@ -250,8 +265,11 @@ export default function Dashboard() {
     setDaySummary(summary);
   };
 
+  const [hasLoggedToday, setHasLoggedToday] = useState(false);
+
   const calculateStreak = async () => {
     let streak = 0;
+    let loggedToday = false;
     let dayCursor = new Date();
 
     while (true) {
@@ -266,12 +284,17 @@ export default function Dashboard() {
         .gte("date", start.toISOString())
         .lte("date", end.toISOString());
 
+      if (isSameDay(dayCursor, new Date())) {
+        loggedToday = data && data.length > 0;
+      }
+
       if (!data || data.length === 0) break;
 
       streak++;
       dayCursor = subDays(dayCursor, 1);
     }
 
+    setHasLoggedToday(loggedToday);
     setStreak(streak);
   };
 
@@ -293,46 +316,47 @@ export default function Dashboard() {
   };
 
   const handleDatePress = (date: Date) => setSelectedDate(date);
-  
+
   const [inspirations, setInspirations] = useState<Inspiration[]>([]);
   useEffect(() => {
-  const today = new Date()
-  const seed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate()
-  
-  // Seeded shuffle function
-  const seededShuffle = (arr: Inspiration[], seed: number) => {
-    const result = [...arr]
-    let currentIndex = result.length
-    let randomIndex: number
+    const today = new Date();
+    const seed =
+      today.getFullYear() * 10000 +
+      (today.getMonth() + 1) * 100 +
+      today.getDate();
 
-    const seededRandom = () => {
-      const x = Math.sin(seed++) * 10000
-      return x - Math.floor(x)
-    }
+    // Seeded shuffle function
+    const seededShuffle = (arr: Inspiration[], seed: number) => {
+      const result = [...arr];
+      let currentIndex = result.length;
+      let randomIndex: number;
 
-    while (currentIndex !== 0) {
-      randomIndex = Math.floor(seededRandom() * currentIndex)
-      currentIndex--
-      ;[result[currentIndex], result[randomIndex]] = [
-        result[randomIndex],
-        result[currentIndex],
-      ]
-    }
+      const seededRandom = () => {
+        const x = Math.sin(seed++) * 10000;
+        return x - Math.floor(x);
+      };
 
-    return result
-  }
+      while (currentIndex !== 0) {
+        randomIndex = Math.floor(seededRandom() * currentIndex);
+        currentIndex--;
+        [result[currentIndex], result[randomIndex]] = [
+          result[randomIndex],
+          result[currentIndex],
+        ];
+      }
 
-  const shuffled = seededShuffle(allInspirations, seed)
-  const selected = shuffled.slice(0, 3).map((item, index) => ({
-    ...item,
-    id: String(index + 1),
-    title: 'GET INSPIRED',
-  }))
+      return result;
+    };
 
-  setInspirations(selected)
-}, [])
+    const shuffled = seededShuffle(allInspirations, seed);
+    const selected = shuffled.slice(0, 3).map((item, index) => ({
+      ...item,
+      id: String(index + 1),
+      title: "GET INSPIRED",
+    }));
 
-
+    setInspirations(selected);
+  }, []);
 
   const renderInspirationCarousel = () => (
     <View>
@@ -352,7 +376,7 @@ export default function Dashboard() {
               { backgroundColor: colors.surface },
             ]}
           >
-             <Text
+            <Text
               style={[
                 typography.h3,
                 {
@@ -764,5 +788,13 @@ const styles = StyleSheet.create({
     elevation: 4,
     shadowColor: "#000",
     shadowOpacity: 0.2,
+  },
+  streakWarning: {
+    position: "absolute",
+    top: 2,
+    //bottom: -20,
+    zIndex: 10,
+    padding: 8,
+    right: 2
   },
 });
