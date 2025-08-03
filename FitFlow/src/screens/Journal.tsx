@@ -727,7 +727,6 @@ export default function Journal() {
     "Improving health and consistency"
   );
 
-  console.log('userGoals', userGoals)
 
   useEffect(() => {
     // Fetch user's name and goals if stored in Supabase profile

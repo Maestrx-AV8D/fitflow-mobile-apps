@@ -7,6 +7,7 @@ import FloatingOverlay from '../components/FloatingOverlay';
 import History from '../screens/History';
 import Schedule from '../screens/Schedule';
 import SmartWorkout from '../screens/SmartWorkout';
+import ThemePreview from '../screens/ThemePreview';
 import { useTheme } from '../theme/theme';
 import MainStack from './MainStack';
 
