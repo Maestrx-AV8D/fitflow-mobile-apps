@@ -1,13 +1,13 @@
 // src/hooks/useAuth.tsx
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import React, {
   createContext,
+  ReactNode,
   useContext,
   useEffect,
   useState,
-  ReactNode,
 } from 'react'
 import { supabase } from '../lib/api'
-import AsyncStorage from '@react-native-async-storage/async-storage'
 
 interface AuthCtx {
   user: any | null
@@ -93,3 +93,9 @@ export function useAuth() {
   if (!ctx) throw new Error('useAuth must be inside AuthProvider')
   return ctx
 }
+/**
+ * ✅ This file is fully set up for AuthContext usage.
+ * To make sure the error "Cannot read property 'Provider' of undefined" never happens:
+ * 1. Import { AuthProvider } and wrap the app in it.
+ * 2. Import { useAuth } from this file only.
+ */

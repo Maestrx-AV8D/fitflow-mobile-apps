@@ -452,31 +452,38 @@ export default function Dashboard() {
       );
     } else if (isAfter(selectedDate, now)) {
       const secondsLeft = differenceInSeconds(selectedDate, now);
-      const hours = Math.floor(secondsLeft / 3600);
+      const days = Math.floor(secondsLeft / 86400);
+      const hours = Math.floor((secondsLeft % 86400) / 3600);
       const minutes = Math.floor((secondsLeft % 3600) / 60);
       const seconds = secondsLeft % 60;
 
       return (
-        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+          ]}
+        >
           <Text
             style={{
               color: colors.textSecondary,
               textAlign: "center",
               marginBottom: spacing.sm,
+              fontSize: 18,
             }}
           >
-            Tomorrow's activities will be ready in
+            Countdown to this day
           </Text>
           <Text
             style={{
               color: colors.textPrimary,
-              fontSize: 22,
+              fontSize: 32,
               fontWeight: "700",
               textAlign: "center",
               marginBottom: spacing.md,
             }}
           >
-            {`${hours}h ${minutes}min ${seconds}s`}
+            {days > 0 ? `${days}d ` : ""}{hours}h {minutes}m {seconds}s
           </Text>
         </View>
       );
@@ -513,118 +520,183 @@ export default function Dashboard() {
     );
   };
 
+  // Header height constant
+  // Reduce the height of the sticky header to visually match the screenshots (closer to ~84-90px)
+  // and allow for enough space for the system status bar/notch.
+  const HEADER_HEIGHT = 92;
+
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <View style={styles.topBar}>
-          <View style={styles.streakBox}>
-            <MaterialIcons
-              name="local-fire-department"
-              size={22}
-              color="#FF6D00"
-            />
-            <Text
-              style={{
-                marginLeft: 6,
-                fontWeight: "600",
-                color: colors.textPrimary,
-              }}
-            >
-              {streak}
-            </Text>
-          </View>
-          <Text style={[typography.h2, { color: colors.textPrimary }]}>
-            {getTimeGreeting()}
-          </Text>
-          <TouchableOpacity onPress={() => nav.navigate("Profile" as never)}>
-            <Ionicons
-              name="person-circle-outline"
-              size={28}
-              color={colors.textPrimary}
-            />
-          </TouchableOpacity>
-        </View>
-
-        <FlatList
-          ref={flatListRef}
-          data={weekDays}
-          keyExtractor={(item) => item.toDateString()}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.dateStrip}
-          renderItem={({ item }) => {
-            const dayLabel = format(item, "E");
-            const dateNumber = format(item, "d");
-            const isSelected = selectedDate && isSameDay(item, selectedDate);
-
-            return (
-              <TouchableOpacity
-                onPress={() => handleDatePress(item)}
-                style={[
-                  styles.dateItem,
-                  {
-                    backgroundColor: isSelected
-                      ? colors.surface
-                      : "transparent",
-                    borderColor: isSelected ? colors.border : "transparent",
-                  },
-                ]}
-              >
-                <Text
-                  style={{
-                    color: isSelected
-                      ? colors.textPrimary
-                      : colors.textSecondary,
-                    fontWeight: isSelected ? "700" : "500",
-                    textAlign: "center",
-                  }}
-                >
-                  {dayLabel}
-                </Text>
-                <Text
-                  style={{
-                    color: isSelected
-                      ? colors.textPrimary
-                      : colors.textSecondary,
-                    fontWeight: isSelected ? "700" : "500",
-                    fontSize: 16,
-                    textAlign: "center",
-                  }}
-                >
-                  {dateNumber}
-                </Text>
-              </TouchableOpacity>
-            );
-          }}
-        />
-
-        {renderDateContent()}
-
-        <View style={styles.chartWrapper}>
+      {/* Sticky Header */}
+      <View
+        style={[
+          styles.topBar,
+          {
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            elevation: 10,
+            height: HEADER_HEIGHT,
+            paddingHorizontal: 14,
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            backgroundColor: colors.background,
+            // Move header content lower
+            paddingTop: 54,
+          },
+        ]}
+      >
+        <View style={styles.streakBox}>
+          <MaterialIcons
+            name="local-fire-department"
+            size={20}
+            color="#FF6D00"
+          />
           <Text
-            style={[
-              typography.h3,
-              { color: colors.textPrimary, marginBottom: 8, textAlign: "center", },
-            ]}
+            style={{
+              marginLeft: 5,
+              fontWeight: "600",
+              color: colors.textPrimary,
+              fontSize: 17,
+            }}
           >
-            Workouts This Week
+            {streak}
           </Text>
-          <WeeklyWorkoutsChart data={chartData} />
         </View>
         <Text
-          style={{
-            color: colors.textSecondary,
-            fontWeight: "700",
-            fontSize: 16,
-            textAlign: "center",
-            marginBottom: 15,
-          }}
+          style={[
+            typography.h2,
+            {
+              color: colors.textPrimary,
+              // Reduce font size a bit for compactness
+              fontSize: 22,
+              lineHeight: 26,
+              textAlign: "center",
+              marginTop: 0,
+              marginBottom: 0,
+            },
+          ]}
         >
-          Get Inspired
+          {getTimeGreeting()}
         </Text>
-        {renderInspirationCarousel()}
-      </ScrollView>
+        <TouchableOpacity onPress={() => nav.navigate("Profile" as never)}>
+          <Ionicons
+            name="person-circle-outline"
+            size={26}
+            color={colors.textPrimary}
+          />
+        </TouchableOpacity>
+      </View>
 
+      {/* Scrollable Content */}
+      <View style={{ flex: 1, marginTop: HEADER_HEIGHT + 15 }}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.container,
+            // Remove paddingTop, marginTop on wrapper instead
+          ]}
+        >
+          {/* Everything below header */}
+          <FlatList
+            ref={flatListRef}
+            data={weekDays}
+            keyExtractor={(item) => item.toDateString()}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            pagingEnabled
+            snapToInterval={width}
+            decelerationRate="fast"
+            snapToAlignment="start"
+            // Reduce marginTop between greeting and date row
+            contentContainerStyle={[styles.dateStrip, { marginTop: 0, marginBottom: 18 }]}
+            renderItem={({ item }) => {
+              const dayLabel = format(item, "E");
+              const dateNumber = format(item, "d");
+              const isSelected = selectedDate && isSameDay(item, selectedDate);
+              const isToday = isSameDay(item, new Date());
+              // Grey out if not today and not selected
+              const isGreyedOut = !isToday && !isSelected;
+              return (
+                <TouchableOpacity
+                  onPress={() => handleDatePress(item)}
+                  style={[
+                    styles.dateItem,
+                    {
+                      backgroundColor: isSelected
+                        ? colors.surface
+                        : "transparent",
+                      borderColor: isSelected ? colors.border : "transparent",
+                      // Make date row slightly more compact
+                      paddingVertical: 6,
+                      paddingHorizontal: 10,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: isSelected
+                        ? colors.textPrimary
+                        : isGreyedOut
+                        ? "#A0A0A0"
+                        : colors.textSecondary,
+                      fontWeight: isSelected ? "700" : "500",
+                      textAlign: "center",
+                      fontSize: 13.5,
+                    }}
+                  >
+                    {dayLabel}
+                  </Text>
+                  <Text
+                    style={{
+                      color: isSelected
+                        ? colors.textPrimary
+                        : isGreyedOut
+                        ? "#A0A0A0"
+                        : colors.textSecondary,
+                      fontWeight: isSelected ? "700" : "500",
+                      fontSize: 15,
+                      textAlign: "center",
+                    }}
+                  >
+                    {dateNumber}
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+
+          {renderDateContent()}
+
+          <View style={styles.chartWrapper}>
+            <Text
+              style={[
+                typography.h3,
+                { color: colors.textPrimary, marginBottom: 8, textAlign: "center" },
+              ]}
+            >
+              Workouts This Week
+            </Text>
+            <WeeklyWorkoutsChart data={chartData} />
+          </View>
+          <Text
+            style={{
+              color: colors.textSecondary,
+              fontWeight: "700",
+              fontSize: 16,
+              textAlign: "center",
+              marginBottom: 15,
+            }}
+          >
+            Get Inspired
+          </Text>
+          {renderInspirationCarousel()}
+        </ScrollView>
+      </View>
+
+      {/* FAB remains absolutely positioned above all content */}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: colors.primary }]}
         onPress={() => nav.navigate("Log" as never)}
@@ -638,18 +710,15 @@ export default function Dashboard() {
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   container: { padding: 16, paddingBottom: 100 },
+  // topBar is now styled inline in the component to allow dynamic height/colors
   topBar: {
-    marginTop: 70,
-    marginBottom: 24,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    // See component for actual style, kept here for type safety and reuse
   },
   streakBox: { flexDirection: "row", alignItems: "center" },
-  dateStrip: { flexDirection: "row", marginBottom: 24 },
+  dateStrip: { flexDirection: "row", marginBottom: 18 },
   dateItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
     borderRadius: 12,
     borderWidth: 1,
     marginRight: 8,

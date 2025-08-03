@@ -1,26 +1,37 @@
 // navigation/MainTabs.tsx
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
-import React from 'react'
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import React from 'react';
 
-import { Ionicons, MaterialIcons } from '@expo/vector-icons'
-import { StyleSheet, TouchableOpacity, useColorScheme, View } from 'react-native'
-import FloatingOverlay from '../components/FloatingOverlay'
-import History from '../screens/History'
-import Schedule from '../screens/Schedule'
-import SmartWorkout from '../screens/SmartWorkout'
-import { useTheme } from '../theme/theme'
-import MainStack from './MainStack'
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
+import FloatingOverlay from '../components/FloatingOverlay';
+import History from '../screens/History';
+import Schedule from '../screens/Schedule';
+import SmartWorkout from '../screens/SmartWorkout';
+import { useTheme } from '../theme/theme';
+import MainStack from './MainStack';
+
+export const WorkoutContext = React.createContext<any>({
+  activeWorkout: null,
+  setActiveWorkout: (_: any) => {},
+});
 
 const Tab = createBottomTabNavigator()
 
-export default function MainTabs() {
+export default function MainTabs({ navigation }) {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
   const [fabExpanded, setFabExpanded] = React.useState(false);
+  const [activeWorkout, setActiveWorkout] = React.useState<any>(null);
   const { colors, spacing } = useTheme();
 
+  const finishWorkout = () => {
+    setActiveWorkout(null);
+    // Additional logic to end workout can be added here
+  };
+
   return (
-    <>
+    <WorkoutContext.Provider value={{ activeWorkout, setActiveWorkout }}>
       <Tab.Navigator
         screenOptions={({ route }) => {
           let iconName: string;
@@ -58,7 +69,6 @@ export default function MainTabs() {
               position: 'absolute',
               left: spacing.md,
               right: spacing.md,
-              //bottom: spacing.xs,
               height: 90,
               borderRadius: 15,
               backgroundColor: colors.surface,
@@ -77,7 +87,7 @@ export default function MainTabs() {
         <Tab.Screen name="Schedule" component={Schedule} options={{ tabBarLabel: 'Schedule' }} />
         <Tab.Screen
           name="Star"
-          component={View} // hidden, placeholder
+          component={View} // hidden placeholder
           options={{
             tabBarButton: () => (
               <TouchableOpacity
@@ -98,18 +108,47 @@ export default function MainTabs() {
           }}
         />
         <Tab.Screen name="Coach" component={SmartWorkout} options={{ tabBarLabel: 'Coach' }} />  
-         <Tab.Screen name="History" component={History} options={{ tabBarLabel: 'History' }} />
+        <Tab.Screen name="History" component={History} options={{ tabBarLabel: 'History' }} />
       </Tab.Navigator>
 
       {/* Overlay Menu */}
       {fabExpanded && <FloatingOverlay onClose={() => setFabExpanded(false)} />}
-    </>
+
+      {activeWorkout && (
+        <TouchableOpacity
+          style={[styles.miniLogBar, { backgroundColor: colors.surface, shadowColor: colors.shadow, borderColor: colors.border }]}
+          activeOpacity={0.85}
+          onPress={() => navigation?.navigate?.('Log')}
+        >
+          <View style={styles.miniLogBarContent}>
+            <View style={styles.miniLogBarInfo}>
+              <Text style={[styles.miniLogBarTextPrimary, { color: colors.textPrimary }]} numberOfLines={1} ellipsizeMode="tail">
+                {activeWorkout.name || 'Active Workout'}
+              </Text>
+              <Text style={[styles.miniLogBarTextSecondary, { color: colors.accent }]}>
+                {activeWorkout.timer || '00:00'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={[styles.finishButton, { backgroundColor: colors.primary }]}
+              onPress={(e) => {
+                e.stopPropagation();
+                finishWorkout();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.finishButtonText, { color: colors.surface }]}>Finish</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      )}
+    </WorkoutContext.Provider>
   );
 }
+
 const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
-    //top: -28,
     alignSelf: 'center',
     width: 56,
     height: 56,
@@ -150,5 +189,54 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginTop: 6,
+  },
+  miniLogBar: {
+    position: 'absolute',
+    bottom: 110, // moved slightly higher for visibility above nav bar
+    left: 20,
+    right: 20,
+    height: 64,
+    marginBottom: 6,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    shadowOpacity: 0.2, // slightly stronger for clarity
+    shadowRadius: 8,
+    elevation: 14,
+    zIndex: 4000, // ensure on top
+    borderWidth: 1,
+  },
+  miniLogBarContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  miniLogBarInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'space-between',
+    marginRight: 12,
+  },
+  miniLogBarTextPrimary: {
+    fontWeight: '700',
+    fontSize: 17,
+    flexShrink: 1,
+  },
+  miniLogBarTextSecondary: {
+    fontWeight: '700',
+    fontSize: 17,
+    marginLeft: 12,
+  },
+  finishButton: {
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  finishButtonText: {
+    fontWeight: '700',
+    fontSize: 14,
   },
 });
