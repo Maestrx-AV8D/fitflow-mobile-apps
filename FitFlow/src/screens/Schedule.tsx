@@ -6,7 +6,7 @@ import {
   isBefore,
   isSameDay,
   parseISO,
-  startOfToday,
+  startOfWeek
 } from 'date-fns';
 import React, { useEffect, useState } from 'react';
 import {
@@ -45,7 +45,7 @@ export default function Schedule() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
-  const [plan, setPlan] = useState<Array<any>>([]);
+  const [plan, setPlan] = useState<any[]>([]);
   const [showCompleted, setShowCompleted] = useState(true);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [warmUpList, setWarmUpList] = useState<{ name: string; sets: string; reps: string }[]>([
@@ -69,6 +69,7 @@ export default function Schedule() {
     })();
   }, []);
 
+<<<<<<< HEAD
   // Import schedule passed in from SmartWorkout ("Import All to Schedule")
   useEffect(() => {
     const imported: ImportedScheduleParam | undefined = (route as any)?.params?.importedSchedule;
@@ -112,6 +113,9 @@ export default function Schedule() {
   }, [route?.params?.importedSchedule]);
 
   const persist = async (newPlan: Array<any>) => {
+=======
+  const persist = async (newPlan: any[]) => {
+>>>>>>> d179b2a (fasting and schedule fix)
     setPlan(newPlan);
     await saveSchedule(newPlan);
   };
@@ -156,11 +160,11 @@ export default function Schedule() {
       if (typeof saveToHistory === 'function') {
         await saveToHistory(historyEntry);
       } else {
-        // eslint-disable-next-line no-console
+         
         console.log('History entry:', historyEntry);
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
+       
       console.log('Failed to save to history:', error);
     }
   }
@@ -283,7 +287,7 @@ export default function Schedule() {
     setDistance('');
   }
 
-  const weekDates = Array.from({ length: 7 }, (_, i) => add(startOfToday(), { days: i }));
+  const weekDates = Array.from({ length: 7 }, (_, i) => add(startOfWeek(new Date(), { weekStartsOn: 1 }), { days: i }));
 
   // Dynamic padding to push header below the status bar while letting the card color paint under it
   const headerPadTop = insets.top + 12;
@@ -355,6 +359,8 @@ export default function Schedule() {
             contentContainerStyle={{ marginBottom: 8 }}
             renderItem={({ item }) => {
               const isSelected = selectedDate && isSameDay(item, selectedDate);
+              const isToday = isSameDay(item, new Date());
+              const isGreyedOut = !isToday && !isSelected;
               return (
                 <TouchableOpacity
                   onPress={() => setSelectedDate(item)}
@@ -372,14 +378,14 @@ export default function Schedule() {
                 >
                   <Text
                     style={{
-                      color: isSelected ? '#FFF' : colors.textPrimary,
-                      fontWeight: '700',
+                      color: isSelected ? '#FFF' : isGreyedOut ? "#A0A0A0" : colors.textPrimary,
+                      fontWeight: isSelected ? "700" : "500",
                       fontSize: 14,
                     }}
                   >
                     {format(item, 'EEE')}
                   </Text>
-                  <Text style={{ color: isSelected ? '#FFF' : colors.textSecondary, fontSize: 12 }}>
+                  <Text style={{ color: isSelected ? '#FFF' : isGreyedOut ? "#A0A0A0" : colors.textSecondary, fontSize: 12}}>
                     {format(item, 'dd MMM')}
                   </Text>
                 </TouchableOpacity>

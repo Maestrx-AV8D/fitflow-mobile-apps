@@ -7,7 +7,6 @@ import FloatingOverlay from '../components/FloatingOverlay';
 import History from '../screens/History';
 import Schedule from '../screens/Schedule';
 import SmartWorkout from '../screens/SmartWorkout';
-import ThemePreview from '../screens/ThemePreview';
 import { useTheme } from '../theme/theme';
 import MainStack from './MainStack';
 
@@ -85,7 +84,7 @@ export default function MainTabs({ navigation }) {
       >
         <Tab.Screen name="Home" component={MainStack} options={{ tabBarLabel: 'Home' }} />
         <Tab.Screen name="Schedule" component={Schedule} options={{ tabBarLabel: 'Schedule' }} />
-        <Tab.Screen name="Theme" component={ThemePreview} options={{ tabBarLabel: 'Theme' }} />
+        {/* <Tab.Screen name="Theme" component={ThemePreview} options={{ tabBarLabel: 'Theme' }} /> */}
         <Tab.Screen
           name="Star"
           component={View} // hidden placeholder
