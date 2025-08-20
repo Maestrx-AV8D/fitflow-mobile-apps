@@ -18,11 +18,22 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSchedule, saveSchedule, saveToHistory } from '../lib/api';
+
 import { useTheme } from '../theme/theme';
+
+const cardShadow = {
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.1,
+  shadowRadius: 4,
+  elevation: 2,
+};
 
 export default function Schedule() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<Array<any>>([]);
   const [showCompleted, setShowCompleted] = useState(true);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -53,25 +64,17 @@ export default function Schedule() {
   };
 
   const filtered = plan.filter(
-    (d) =>
-      (showCompleted ? true : !d.done) &&
-      d.type === sessionType
+    (d) => (showCompleted ? true : !d.done) && d.type === sessionType
   );
-  // Sort filtered by date ascending so nearest upcoming date appears first
-  const sortedFiltered = [...filtered].sort((a, b) =>
-    parseISO(a.date).getTime() - parseISO(b.date).getTime()
+  const sortedFiltered = [...filtered].sort(
+    (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()
   );
 
   async function completeDay(idx: number) {
-    // Prevent completion if frozen
     if (plan[idx]?.frozen) return;
-    const updated = plan.map((d, i) =>
-      i === idx ? { ...d, done: true } : d
-    );
-    // Save updated schedule
+    const updated = plan.map((d, i) => (i === idx ? { ...d, done: true } : d));
     persist(updated);
 
-    // Prepare history entry
     const completedItem = updated[idx];
     const historyEntry: any = {
       date: completedItem.date,
@@ -96,12 +99,10 @@ export default function Schedule() {
         },
       ];
     }
-    // Save to history (placeholder if not implemented)
     try {
       if (typeof saveToHistory === 'function') {
         await saveToHistory(historyEntry);
       } else {
-        // fallback placeholder
         // eslint-disable-next-line no-console
         console.log('History entry:', historyEntry);
       }
@@ -111,17 +112,46 @@ export default function Schedule() {
     }
   }
 
-  // Toggle frozen state for a specific item
   function toggleFreeze(idx: number) {
-    const updated = plan.map((d, i) =>
-      i === idx ? { ...d, frozen: !d.frozen } : d
-    );
+    const updated = plan.map((d, i) => (i === idx ? { ...d, frozen: !d.frozen } : d));
     persist(updated);
   }
 
   function removeDay(idx: number) {
     const updated = plan.filter((_, i) => i !== idx);
     persist(updated);
+  }
+
+  // Robust navigation to Log
+  function safeNavigateToLog(entry: any) {
+    const tryNavigate = (nav: any) => {
+      try {
+        const state = nav?.getState?.();
+        const hasRoute = state?.routeNames?.includes?.('Log');
+        if (hasRoute) {
+          nav.navigate('Log', { entry });
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    };
+
+    if (tryNavigate(navigation)) return;
+
+    let parent = navigation.getParent?.();
+    while (parent) {
+      if (tryNavigate(parent)) return;
+      parent = parent.getParent?.();
+    }
+
+    const root = navigation.getParent?.() || navigation;
+    try {
+      root.navigate('Home', { screen: 'Log', params: { entry } });
+    } catch (_) {
+      try {
+        navigation.navigate({ name: 'Log', params: { entry }, merge: true } as any);
+      } catch (_) {}
+    }
   }
 
   function importToLog(day: any, exercise?: string) {
@@ -136,9 +166,7 @@ export default function Schedule() {
       const [name, rest = ''] = exercise.split(':');
       const sets = rest.match(/(\d+)×/)?.[1] || '';
       const reps = rest.match(/×(\d+)/)?.[1] || '';
-      entry.exercises = [
-        { name: name.trim(), sets, reps, weight: '' },
-      ];
+      entry.exercises = [{ name: name.trim(), sets, reps, weight: '' }];
     } else if (day.type === 'Gym') {
       entry.exercises = (day.mainSet || []).map((s: string) => {
         const [name, rest = ''] = s.split(':');
@@ -155,7 +183,7 @@ export default function Schedule() {
         },
       ];
     }
-    navigation.navigate('Log', { entry });
+    safeNavigateToLog(entry);
   }
 
   function handleManualScheduleSubmit() {
@@ -179,7 +207,6 @@ export default function Schedule() {
     };
 
     if (sessionType === 'Gym') {
-      // Format: "Bench Press: 3×10"
       newDay.warmUp = warmUpList
         .filter((e) => e.name.trim() !== '')
         .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ''}`);
@@ -203,46 +230,60 @@ export default function Schedule() {
     setDistance('');
   }
 
-  const weekDates = Array.from({ length: 7 }, (_, i) =>
-    add(startOfToday(), { days: i })
-  );
-  // Shared header height constant for consistent vertical spacing
-  // Adjusted header height to ensure full visibility of first schedule item
-  // Reduce header heights by ~30% for mobile compression
-  const HEADER_HEIGHT_GYM = 500;
-  const HEADER_HEIGHT_OTHER = 375;
-  const HEADER_HEIGHT = sessionType === 'Gym' ? HEADER_HEIGHT_GYM : HEADER_HEIGHT_OTHER;
-  const FLATLIST_PADDING_TOP = HEADER_HEIGHT + 32;
+  const weekDates = Array.from({ length: 7 }, (_, i) => add(startOfToday(), { days: i }));
+
+  // Dynamic padding to push header below the status bar while letting the card color paint under it
+  const headerPadTop = insets.top + 12;
+
+  // Measure header height so list never starts hidden beneath it
+  const [headerHeight, setHeaderHeight] = useState(0);
+  // Tiny breathing room so the list doesn’t peek under the card
+  const EXTRA_GAP = 8;
+  const listTopOffset = Math.max(0, headerHeight + EXTRA_GAP);
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: colors.card }}>
       {/* Fixed Header */}
       <View
+        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
           zIndex: 10,
-          backgroundColor: colors.background,
-          paddingTop: 68, // increased from 56 to push header content lower
+          backgroundColor: colors.card,
+          paddingTop: headerPadTop,
           paddingBottom: 0,
-          paddingHorizontal: 12, // reduced from 16
-          height: HEADER_HEIGHT,
+          paddingHorizontal: 12,
         }}
       >
+        {/* Background underlay (card color) that paints to the very top */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,            // paint from very top of the screen
+            left: 0,
+            right: 0,
+            bottom: 0,         // line up exactly with the list container
+            backgroundColor: colors.card,
+          }}
+        />
         <Text style={[typography.h2, { color: colors.textPrimary, marginBottom: 8, fontSize: 28 }]}>
           Schedule
         </Text>
 
+        {/* Create Session */}
         <View
           style={{
             backgroundColor: colors.card,
-            borderRadius: 8, // reduced from 12
-            padding: 11, // reduced from 16
-            marginBottom: 0,
-            minHeight: 200, // reduced from 290
+            borderRadius: 12,
+            padding: 12,
+            marginBottom: 8,
+            minHeight: 200,
             justifyContent: 'flex-start',
+            ...cardShadow,
           }}
         >
           <Text style={[typography.h3, { color: colors.textPrimary, fontSize: 18 }]}>
@@ -265,20 +306,21 @@ export default function Schedule() {
                 <TouchableOpacity
                   onPress={() => setSelectedDate(item)}
                   style={{
-                    paddingVertical: 5, // reduced from 8
-                    paddingHorizontal: 8, // reduced from 12
-                    marginRight: 5, // reduced from 8
-                    borderRadius: 7, // reduced from 10
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    marginRight: 8,
+                    borderRadius: 10,
                     borderWidth: 1,
                     borderColor: isSelected ? colors.primary : colors.border,
                     backgroundColor: isSelected ? colors.primary : colors.inputBackground,
                     alignItems: 'center',
+                    ...cardShadow,
                   }}
                 >
                   <Text
                     style={{
                       color: isSelected ? '#FFF' : colors.textPrimary,
-                      fontWeight: '600',
+                      fontWeight: '700',
                       fontSize: 14,
                     }}
                   >
@@ -300,28 +342,33 @@ export default function Schedule() {
                 key={type}
                 onPress={() => setSessionType(type)}
                 style={{
-                  backgroundColor:
-                    sessionType === type ? colors.primary : colors.inputBackground,
-                  paddingVertical: 7, // reduced from 10
-                  paddingHorizontal: 11, // reduced from 16
-                  borderRadius: 6, // reduced from 8
-                  marginRight: 5, // reduced from 8
-                  marginTop: 4, // reduced from 6
+                  backgroundColor: sessionType === type ? colors.surface : colors.inputBackground,
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 16,
+                  marginRight: 8,
+                  marginTop: 6,
+                  borderWidth: 1,
+                  borderColor: sessionType === type ? colors.primary : colors.border,
                 }}
               >
-                <Text style={{ color: sessionType === type ? '#FFF' : colors.textPrimary, fontSize: 16 }}>
+                <Text
+                  style={{
+                    color: sessionType === type ? colors.textPrimary : colors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: '700',
+                  }}
+                >
                   {type}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          {/* Distance + Duration Input for non-Gym */}
+          {/* Distance + Duration for non-Gym */}
           {sessionType !== 'Gym' && (
             <View style={{ marginBottom: 8 }}>
-              <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                Duration (min)
-              </Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>Duration (min)</Text>
               <TextInput
                 value={duration}
                 keyboardType="numeric"
@@ -329,9 +376,9 @@ export default function Schedule() {
                 style={{
                   borderWidth: 1,
                   borderColor: colors.border,
-                  padding: 8, // reduced from 12
-                  borderRadius: 7, // reduced from 10
-                  marginTop: 2, // reduced from 4
+                  padding: 8,
+                  borderRadius: 7,
+                  marginTop: 2,
                   color: colors.textPrimary,
                 }}
                 placeholder="e.g. 30 (minutes)"
@@ -348,9 +395,9 @@ export default function Schedule() {
                 style={{
                   borderWidth: 1,
                   borderColor: colors.border,
-                  padding: 8, // reduced from 12
-                  borderRadius: 7, // reduced from 10
-                  marginTop: 2, // reduced from 4
+                  padding: 8,
+                  borderRadius: 7,
+                  marginTop: 2,
                   color: colors.textPrimary,
                 }}
                 placeholder="e.g. 5.0 (kilometers)"
@@ -358,15 +405,16 @@ export default function Schedule() {
               />
             </View>
           )}
-          {/* Exercise Inputs (Gym Only) */}
+
+          {/* Gym Inputs */}
           {sessionType === 'Gym' && (
             <ScrollView
               style={{ maxHeight: 230, marginVertical: 4 }}
               contentContainerStyle={{ paddingBottom: 6 }}
               keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={true}
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
             >
-              {/* Warm-Up */}
               <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
                 Warm-Up
               </Text>
@@ -380,9 +428,9 @@ export default function Schedule() {
                       style={{
                         borderWidth: 1,
                         borderColor: colors.border,
-                        padding: 8, // reduced from 12
-                        borderRadius: 7, // reduced from 10
-                        fontSize: 14, // reduced from 16
+                        padding: 8,
+                        borderRadius: 7,
+                        fontSize: 14,
                         color: colors.textPrimary,
                         marginBottom: 1,
                       }}
@@ -439,14 +487,10 @@ export default function Schedule() {
                   </View>
                   {warmUpList.length > 1 && (
                     <TouchableOpacity
-                      onPress={() =>
-                        setWarmUpList(warmUpList.filter((_, i) => i !== idx))
-                      }
+                      onPress={() => setWarmUpList(warmUpList.filter((_, i) => i !== idx))}
                       style={{ justifyContent: 'center', alignItems: 'center', marginLeft: 2 }}
                     >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
+                      <Text style={{ color: colors.error, fontSize: 12 }}>Remove</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -454,14 +498,11 @@ export default function Schedule() {
               <TouchableOpacity
                 onPress={() => setWarmUpList([...warmUpList, { name: '', sets: '', reps: '' }])}
               >
-                <Text
-                  style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}
-                >
+                <Text style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}>
                   Add Warm-Up
                 </Text>
               </TouchableOpacity>
 
-              {/* Main Set */}
               <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
                 Main Set
               </Text>
@@ -534,14 +575,10 @@ export default function Schedule() {
                   </View>
                   {mainSetList.length > 1 && (
                     <TouchableOpacity
-                      onPress={() =>
-                        setMainSetList(mainSetList.filter((_, i) => i !== idx))
-                      }
+                      onPress={() => setMainSetList(mainSetList.filter((_, i) => i !== idx))}
                       style={{ justifyContent: 'center', alignItems: 'center', marginLeft: 2 }}
                     >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
+                      <Text style={{ color: colors.error, fontSize: 12 }}>Remove</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -549,14 +586,11 @@ export default function Schedule() {
               <TouchableOpacity
                 onPress={() => setMainSetList([...mainSetList, { name: '', sets: '', reps: '' }])}
               >
-                <Text
-                  style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}
-                >
+                <Text style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}>
                   Add Main Set
                 </Text>
               </TouchableOpacity>
 
-              {/* Cool-Down */}
               <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
                 Cool-Down
               </Text>
@@ -629,14 +663,10 @@ export default function Schedule() {
                   </View>
                   {coolDownList.length > 1 && (
                     <TouchableOpacity
-                      onPress={() =>
-                        setCoolDownList(coolDownList.filter((_, i) => i !== idx))
-                      }
+                      onPress={() => setCoolDownList(coolDownList.filter((_, i) => i !== idx))}
                       style={{ justifyContent: 'center', alignItems: 'center', marginLeft: 2 }}
                     >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
+                      <Text style={{ color: colors.error, fontSize: 12 }}>Remove</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -644,9 +674,7 @@ export default function Schedule() {
               <TouchableOpacity
                 onPress={() => setCoolDownList([...coolDownList, { name: '', sets: '', reps: '' }])}
               >
-                <Text
-                  style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}
-                >
+                <Text style={{ color: colors.accent, fontWeight: '600', marginVertical: 4, fontSize: 14 }}>
                   Add Cool-Down
                 </Text>
               </TouchableOpacity>
@@ -657,12 +685,13 @@ export default function Schedule() {
           <TouchableOpacity
             onPress={handleManualScheduleSubmit}
             style={{
-              marginTop: 10, // reduced from 16
-              paddingVertical: 7, // reduced from 10
-              paddingHorizontal: 11, // reduced from 16
-              borderRadius: 6, // reduced from 8
+              marginTop: 12,
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 10,
               backgroundColor: colors.success + '22',
               alignSelf: 'flex-start',
+              ...cardShadow,
             }}
           >
             <Text style={{ color: colors.success, fontWeight: '600', fontSize: 16 }}>
@@ -670,16 +699,17 @@ export default function Schedule() {
             </Text>
           </TouchableOpacity>
 
-          {/* Upcoming Section Heading - moved here, always after the last form input */}
+          {/* Upcoming Heading */}
           <Text
             style={[
               typography.h3,
               {
                 color: colors.textPrimary,
-                marginTop: 12, // reduced from 18
-                paddingBottom: 6, // reduced from 8
-                paddingHorizontal: 2, // reduced from 4
-                fontSize: 18, // reduced from 20
+                marginTop: 14,
+                paddingBottom: 6,
+                paddingHorizontal: 2,
+                fontSize: 18,
+                fontWeight: '800',
               },
             ]}
           >
@@ -687,35 +717,49 @@ export default function Schedule() {
           </Text>
         </View>
       </View>
-      {/* FlatList below header */}
-      <View style={{ flex: 1, paddingTop: FLATLIST_PADDING_TOP }}>
+
+      {/* List below header */}
+      <View
+        style={{
+          flex: 1,
+          paddingTop: listTopOffset,
+          backgroundColor: colors.card,
+          marginTop: 0,
+        }}
+      >
         <FlatList
+          style={{ backgroundColor: colors.card }}
           data={sortedFiltered}
           keyExtractor={(item, index) => `${item.date}-${index}`}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
           contentContainerStyle={{
-            paddingBottom: 70, // reduced from 100
-            paddingTop: 100,
+            paddingBottom: insets.bottom + 140,
+            paddingTop: 0,
           }}
+          ListFooterComponent={<View style={{ height: insets.bottom + 24 }} />}
           renderItem={({ item, index }) => (
             <View
               key={`${item.date}-${index}`}
               style={{
                 backgroundColor: colors.card,
-                borderRadius: 10, // reduced from 14
-                padding: 15, // reduced from 20
-                marginHorizontal: 12, // reduced from 16
-                marginBottom: 12, // reduced from 16
+                borderRadius: 12,
+                padding: 16,
+                marginHorizontal: 12,
+                marginBottom: 12,
                 opacity: item.done ? 0.5 : 1,
+                ...cardShadow,
               }}
             >
               {item.frozen && (
                 <Text
                   style={{
-                    fontSize: 12, // reduced from 14
+                    fontSize: 12,
                     fontWeight: '500',
                     color: colors.warning,
-                    marginBottom: 2, // reduced from 4
-                    marginLeft: 2, // reduced from 4
+                    marginBottom: 2,
+                    marginLeft: 2,
                   }}
                 >
                   Frozen
@@ -725,14 +769,13 @@ export default function Schedule() {
                 style={{
                   flexDirection: 'row',
                   justifyContent: 'space-between',
-                  marginBottom: 5, // reduced from 8
+                  marginBottom: 5,
                 }}
               >
                 <Text style={{ fontSize: 14, color: colors.textSecondary }}>
                   {format(parseISO(item.date), 'dd/MM/yy')}
                 </Text>
                 <View style={{ flexDirection: 'row' }}>
-                  {/* Freeze/Unfreeze Button REMOVED */}
                   {!item.done && (
                     <TouchableOpacity
                       onPress={() => {
@@ -742,12 +785,10 @@ export default function Schedule() {
                       <Text
                         style={{
                           fontWeight: '600',
-                          color: item.frozen
-                            ? colors.textSecondary
-                            : colors.success,
-                          marginRight: 8, // reduced from 12
+                          color: item.frozen ? colors.textSecondary : colors.success,
+                          marginRight: 8,
                           opacity: item.frozen ? 0.5 : 1,
-                          fontSize: 15, // reduced from 18
+                          fontSize: 15,
                         }}
                       >
                         Complete
@@ -774,23 +815,18 @@ export default function Schedule() {
                 </View>
               </View>
 
-              {/* Render based on session type */}
               {item.type === 'Gym' ? (
                 ['warmUp', 'mainSet', 'coolDown'].map((sec) => (
                   <View key={sec} style={{ marginTop: 5 }}>
                     <Text
-                        style={{
-                          fontWeight: '600',
-                          marginBottom: 2,
-                          color: colors.textSecondary,
-                          fontSize: 14,
-                        }}
+                      style={{
+                        fontWeight: '600',
+                        marginBottom: 2,
+                        color: colors.textSecondary,
+                        fontSize: 14,
+                      }}
                     >
-                      {sec === 'warmUp'
-                        ? 'Warm-Up'
-                        : sec === 'mainSet'
-                        ? 'Main Set'
-                        : 'Cool-Down'}
+                      {sec === 'warmUp' ? 'Warm-Up' : sec === 'mainSet' ? 'Main Set' : 'Cool-Down'}
                     </Text>
                     {(item[sec] || []).map((entry: string, j: number) => (
                       <View
@@ -804,8 +840,8 @@ export default function Schedule() {
                         <Text
                           style={{
                             flex: 1,
-                            marginLeft: 2, // reduced from 4
-                            marginBottom: 1, // reduced from 2
+                            marginLeft: 2,
+                            marginBottom: 1,
                             color: colors.textPrimary,
                             fontSize: 14,
                           }}
@@ -813,9 +849,7 @@ export default function Schedule() {
                           • {entry}
                         </Text>
                         {sec === 'mainSet' && (
-                          <TouchableOpacity
-                            onPress={() => importToLog(item, entry)}
-                          >
+                          <TouchableOpacity onPress={() => importToLog(item, entry)}>
                             <Text
                               style={{
                                 fontWeight: '600',

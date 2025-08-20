@@ -9,9 +9,9 @@ import {
   isBefore,
   isSameDay,
   startOfWeek,
-  subDays,
+  subDays
 } from "date-fns";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
   FlatList,
@@ -21,8 +21,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-import WeeklyWorkoutsChart from "../components/WeeklyWorkoutChart";
 import { allInspirations, Inspiration } from "../constants/inspirations";
 import {
   getEntryCount,
@@ -33,10 +31,39 @@ import {
 } from "../lib/api";
 import { useTheme } from "../theme/theme";
 
+// ---- Simple, theme-aware weekly bars (no 3rd‑party chart) ----
+type WeeklyPoint = { date: Date; count: number };
+
+const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
+  const cleaned = (Array.isArray(raw) ? raw : []).map((d: any) => {
+    const rawDate = d?.date ?? d?.day ?? d;
+    const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
+    const valid = parsed && !isNaN(parsed.getTime());
+    const val = Number(d?.count ?? d?.value ?? d) || 0;
+    return { date: valid ? parsed : null, count: isFinite(val) ? val : 0 };
+  }).filter((it: any) => it.date);
+
+  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const buckets: WeeklyPoint[] = Array.from({ length: 7 }, (_, i) => ({
+    date: addDays(weekStart, i),
+    count: 0,
+  }));
+
+  cleaned.forEach((it: any) => {
+    const idx = Math.max(0, Math.min(6, Math.floor((it.date.getDay() + 6) % 7)));
+    buckets[idx].count += isFinite(it.count) ? it.count : 0;
+  });
+
+  return buckets;
+};
+
 const { width } = Dimensions.get("window");
 
 export default function Dashboard() {
   const { colors, spacing, typography } = useTheme();
+  // Safe chart width helpers (avoid NaN from undefined spacing values)
+  const chartHorizontalPadding = (spacing as any)?.lg ?? (spacing as any)?.l ?? 16;
+  const chartWidth = Math.max(280, width - chartHorizontalPadding * 2);
   const nav = useNavigation();
   const flatListRef = useRef<FlatList>(null);
 
@@ -544,9 +571,117 @@ export default function Dashboard() {
     );
   };
 
+  // ---- Weekly derived stats (for added components; non-destructive)
+  const weeklyStats = useMemo(() => {
+    const days = Array.isArray(chartData) ? chartData : [];
+    const total = days.reduce((s: number, v: any) => s + (Number(v?.value ?? v) || 0), 0);
+    const activeDays = days.filter((v: any) => (Number(v?.value ?? v) || 0) > 0).length;
+    let best = { index: -1, value: -1 };
+    days.forEach((v: any, i: number) => {
+      const n = Number(v?.value ?? v) || 0;
+      if (n > best.value) best = { index: i, value: n };
+    });
+    const goal = 5; // soft weekly goal
+    const pct = goal > 0 ? Math.min(1, total / goal) : 0;
+    return { total, activeDays, best, goal, pct };
+  }, [chartData]);
+
+  const renderWeeklyKPI = () => (
+    <View style={styles.kpiRow}>
+      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Workouts</Text>
+        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{weeklyStats.total}</Text>
+      </View>
+      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Active Days</Text>
+        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{weeklyStats.activeDays}/7</Text>
+      </View>
+      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Best Day</Text>
+        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>
+          {weeklyStats.best.index >= 0 ? format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index), "EEE") : "—"}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const renderWeeklyAchievements = () => (
+    <View style={[styles.card, { backgroundColor: colors.surface }]}>
+      <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 16, marginBottom: 10 }}>
+        Weekly Achievements
+      </Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+        <View style={{ flex: 1, marginRight: 8 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Consistency</Text>
+          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
+            {streak} day streak
+          </Text>
+        </View>
+        <View style={{ flex: 1, marginRight: 8 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Most Active</Text>
+          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
+            {weeklyStats.best.index >= 0 ? `${format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index), "EEE")} (${weeklyStats.best.value})` : "—"}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Total Sessions</Text>
+          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
+            {weeklyStats.total}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  const renderGoalProgress = () => (
+    <View style={{ marginTop: 10 }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Weekly Goal</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+          {Math.round(weeklyStats.pct * 100)}%
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.progressTrack,
+          { backgroundColor: colors.inputBackground, borderColor: colors.border },
+        ]}
+      >
+        <View
+          style={[
+            styles.progressFill,
+            { backgroundColor: colors.primary, width: `${weeklyStats.pct * 100}%` },
+          ]}
+        />
+      </View>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
+        {weeklyStats.total} / {weeklyStats.goal} sessions
+      </Text>
+    </View>
+  );
+
+  const renderDayLabels = () => {
+    const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    return (
+      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+        {labels.map((l) => (
+          <Text
+            key={l}
+            style={{
+              color: colors.textSecondary,
+              fontSize: 12,
+              width: Math.max(1, (width - 64) / 7),
+              textAlign: "center",
+            }}
+          >
+            {l}
+          </Text>
+        ))}
+      </View>
+    );
+  };
+
   // Header height constant
-  // Reduce the height of the sticky header to visually match the screenshots (closer to ~84-90px)
-  // and allow for enough space for the system status bar/notch.
   const HEADER_HEIGHT = 92;
 
   return (
@@ -568,7 +703,6 @@ export default function Dashboard() {
             justifyContent: "space-between",
             alignItems: "center",
             backgroundColor: colors.background,
-            // Move header content lower
             paddingTop: 54,
           },
         ]}
@@ -595,7 +729,6 @@ export default function Dashboard() {
             typography.h2,
             {
               color: colors.textPrimary,
-              // Reduce font size a bit for compactness
               fontSize: 22,
               lineHeight: 26,
               textAlign: "center",
@@ -617,13 +750,8 @@ export default function Dashboard() {
 
       {/* Scrollable Content */}
       <View style={{ flex: 1, marginTop: HEADER_HEIGHT + 15 }}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.container,
-            // Remove paddingTop, marginTop on wrapper instead
-          ]}
-        >
-          {/* Everything below header */}
+        <ScrollView contentContainerStyle={[styles.container]}>
+          {/* Existing date carousel */}
           <FlatList
             ref={flatListRef}
             data={weekDays}
@@ -634,14 +762,12 @@ export default function Dashboard() {
             snapToInterval={width}
             decelerationRate="fast"
             snapToAlignment="start"
-            // Reduce marginTop between greeting and date row
             contentContainerStyle={[styles.dateStrip, { marginTop: 0, marginBottom: 18 }]}
             renderItem={({ item }) => {
               const dayLabel = format(item, "E");
               const dateNumber = format(item, "d");
               const isSelected = selectedDate && isSameDay(item, selectedDate);
               const isToday = isSameDay(item, new Date());
-              // Grey out if not today and not selected
               const isGreyedOut = !isToday && !isSelected;
               return (
                 <TouchableOpacity
@@ -649,11 +775,8 @@ export default function Dashboard() {
                   style={[
                     styles.dateItem,
                     {
-                      backgroundColor: isSelected
-                        ? colors.surface
-                        : "transparent",
+                      backgroundColor: isSelected ? colors.surface : "transparent",
                       borderColor: isSelected ? colors.border : "transparent",
-                      // Make date row slightly more compact
                       paddingVertical: 6,
                       paddingHorizontal: 10,
                     },
@@ -694,17 +817,68 @@ export default function Dashboard() {
 
           {renderDateContent()}
 
-          <View style={styles.chartWrapper}>
-            <Text
-              style={[
-                typography.h3,
-                { color: colors.textPrimary, marginBottom: 8, textAlign: "center" },
-              ]}
-            >
-              Workouts This Week
-            </Text>
-            <WeeklyWorkoutsChart data={chartData} />
+          {renderWeeklyKPI()}
+
+          {/* Themed weekly chart section */}
+          <View style={[styles.chartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={{ marginVertical: 20 }}>
+              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                Weekly Activity
+              </Text>
+              {(() => {
+                const buckets = makeWeeklyBuckets(chartData);
+                const labels = buckets.map((b) => format(b.date, "EEE"));
+                const max = Math.max(1, ...buckets.map((b) => b.count));
+                const BAR_MAX_H = 120;
+
+                return (
+                  <View style={{ marginTop: 14 }}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: BAR_MAX_H + 8 }}>
+                      {buckets.map((b, i) => {
+                        const h = Math.round((b.count / max) * BAR_MAX_H);
+                        const has = b.count > 0;
+                        return (
+                          <View key={i} style={{ alignItems: "center", width: (chartWidth - 32) / 7 }}>
+                            <View
+                              style={{
+                                width: 16,
+                                height: BAR_MAX_H,
+                                borderRadius: 8,
+                                backgroundColor: colors.inputBackground,
+                                borderWidth: StyleSheet.hairlineWidth,
+                                borderColor: colors.border,
+                                justifyContent: "flex-end",
+                                overflow: "hidden",
+                              }}
+                            >
+                              <View
+                                style={{
+                                  height: h,
+                                  backgroundColor: colors.accent,
+                                  opacity: has ? 0.95 : 0.25,
+                                  borderTopLeftRadius: 8,
+                                  borderTopRightRadius: 8,
+                                }}
+                              />
+                            </View>
+                            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
+                              {labels[i]}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  </View>
+                );
+              })()}
+            </View>
+            {renderGoalProgress()}
           </View>
+
+          {renderWeeklyAchievements()}
+
+          {/* Original date-based summary & inspiration remain (preserved functionality) */}
+
           <Text
             style={{
               color: colors.textSecondary,
@@ -720,7 +894,7 @@ export default function Dashboard() {
         </ScrollView>
       </View>
 
-      {/* FAB remains absolutely positioned above all content */}
+      {/* FAB */}
       <TouchableOpacity
         style={[styles.fab, { backgroundColor: colors.primary }]}
         onPress={() => nav.navigate("Log" as never)}
@@ -778,6 +952,56 @@ const styles = StyleSheet.create({
     backgroundColor: "#15131D",
     marginBottom: 50,
     marginTop: 25,
+  },
+  // New themed chart card
+  chartCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  // KPIs
+  kpiRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  kpiCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    marginRight: 10,
+  },
+  kpiLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+  kpiValue: {
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  progressTrack: {
+    height: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 10,
+    borderRadius: 999,
+  },
+  chartWrapperCompact: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+  },
+  sectionTitle: {
+    fontWeight: "700",
+    fontSize: 16,
   },
   fab: {
     position: "absolute",
