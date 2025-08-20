@@ -25,7 +25,7 @@ import { supabase } from '../lib/api'
 async function getUserProfile() {
   const { data, error } = await supabase
     .from('profiles')
-    .select('age, gender, fitness_level, goals')
+    .select('age, gender, goals')
     .single()
   if (error) throw error
   return data
@@ -136,10 +136,10 @@ export default function SmartWorkout() {
         goals: user.goals,
       };
       if (view === 'Workout') {
-        const result = await generateWorkout(prompt, userContext)
+        const result = await generateWorkout(prompt, )
         setWorkout({ ...result, description: result.description || "This personalized workout is crafted to push your limits while keeping things enjoyable. Expect a progression that builds strength, improves endurance, and leaves you feeling accomplished. Listen to your body, and don’t forget to breathe through each rep." })
       } else if (view === 'Schedule') {
-        const raw = await generateSchedule(prompt, userContext)
+        const raw = await generateSchedule(prompt, )
         const sanitized = (Array.isArray(raw) ? raw : []).map((day: any) => ({
           date: typeof day.date === 'string' ? day.date : '',
           warmUp: Array.isArray(day.warmUp) ? day.warmUp : [],
@@ -148,7 +148,7 @@ export default function SmartWorkout() {
         }))
         setSchedule(sanitized)
       } else {
-        const result = await generateNutrition(prompt, userContext)
+        const result = await generateNutrition(prompt, )
         setNutrition(result)
       }
     } catch (e) {

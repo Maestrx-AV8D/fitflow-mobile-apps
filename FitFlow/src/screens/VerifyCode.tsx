@@ -1,15 +1,15 @@
+import { useNavigation, useRoute } from '@react-navigation/native'
 import React, { useState } from 'react'
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
+  View,
 } from 'react-native'
 import { verifyLoginCode } from '../lib/api'
-import { useNavigation, useRoute } from '@react-navigation/native'
 
 export default function VerifyCode() {
   const nav = useNavigation()

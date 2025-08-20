@@ -390,10 +390,10 @@
 
 
 // src/screens/SignIn.tsx
-import React, { useState } from 'react'
-import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, ActivityIndicator } from 'react-native'
-import { signUp, signIn } from '../lib/api'
 import { useNavigation } from '@react-navigation/native'
+import React, { useState } from 'react'
+import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native'
+import { signIn, signUp } from '../lib/api'
 
 export default function SignIn() {
   const nav = useNavigation()

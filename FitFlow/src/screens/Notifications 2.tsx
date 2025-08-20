@@ -585,19 +585,19 @@ import { useNavigation } from "@react-navigation/native";
 import * as Notifications from "expo-notifications";
 import React, { useEffect, useState } from "react";
 import {
-    Linking,
-    Modal,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    View,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { supabase } from "../lib/api";
 import {
-    scheduleAllReminders
+  scheduleAllReminders
 } from "../lib/notification";
 import { useTheme } from "../theme/theme";
 
