@@ -2,7 +2,7 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, useColorScheme, View } from 'react-native';
 import FloatingOverlay from '../components/FloatingOverlay';
 import History from '../screens/History';
 import Schedule from '../screens/Schedule';
@@ -114,11 +114,12 @@ export default function MainTabs({ navigation }) {
       {/* Overlay Menu */}
       {fabExpanded && <FloatingOverlay onClose={() => setFabExpanded(false)} />}
 
-      {activeWorkout && (
+      {/* {activeWorkout && (
         <TouchableOpacity
           style={[styles.miniLogBar, { backgroundColor: colors.surface, shadowColor: colors.shadow, borderColor: colors.border }]}
           activeOpacity={0.85}
-          onPress={() => navigation?.navigate?.('Log')}
+          // onPress={() => navigation?.navigate?.('Log')}
+          onPress={() => navigation.navigate("Home", { screen: "Log" })}
         >
           <View style={styles.miniLogBarContent}>
             <View style={styles.miniLogBarInfo}>
@@ -141,7 +142,7 @@ export default function MainTabs({ navigation }) {
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
-      )}
+      )} */}
     </WorkoutContext.Provider>
   );
 }

@@ -1,9 +1,9 @@
-import { NavigatorScreenParams } from "@react-navigation/native"
+import { NavigatorScreenParams } from "@react-navigation/native";
 
 export type MainStackParamList = {
   Dashboard: undefined
   Fasting: undefined
-  Log: undefined
+  Log: { entry?: any } | undefined;
   Journal: undefined
   Profile: undefined
   YourData: undefined
@@ -14,5 +14,14 @@ export type MainStackParamList = {
 
 export type RootTabParamList = {
   Home: NavigatorScreenParams<MainStackParamList>;
-  // other tabs...
+  Schedule: undefined;
+  Star: undefined;
+  Coach: undefined;
+  History: undefined;
+};
+
+export type RootStackParamList = {
+  Main: NavigatorScreenParams<RootTabParamList>;
+  SignIn: undefined;
+  Onboarding: undefined;
 };

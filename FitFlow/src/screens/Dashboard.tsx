@@ -9,7 +9,7 @@ import {
   isBefore,
   isSameDay,
   startOfWeek,
-  subDays
+  subDays,
 } from "date-fns";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,13 +21,15 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import FastCelebrationCard from "../components/FastCelebrationCard";
 import { allInspirations, Inspiration } from "../constants/inspirations";
 import {
   getEntryCount,
   getExercisesCompleted,
   getLatestWorkoutDate,
-  supabase
+  supabase,
 } from "../lib/api";
+import { useFastingState } from "../lib/fastingState";
 import { useTheme } from "../theme/theme";
 
 // ---- Simple, theme-aware weekly bars (no 3rd‑party chart) ----
@@ -44,24 +46,32 @@ const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
 
   // Helper: map day label -> index (Mon=0 .. Sun=6)
   const dayIdx: Record<string, number> = {
-    Mon: 0, Monday: 0,
-    Tue: 1, Tuesday: 1,
-    Wed: 2, Wednesday: 2,
-    Thu: 3, Thursday: 3,
-    Fri: 4, Friday: 4,
-    Sat: 5, Saturday: 5,
-    Sun: 6, Sunday: 6,
+    Mon: 0,
+    Monday: 0,
+    Tue: 1,
+    Tuesday: 1,
+    Wed: 2,
+    Wednesday: 2,
+    Thu: 3,
+    Thursday: 3,
+    Fri: 4,
+    Friday: 4,
+    Sat: 5,
+    Saturday: 5,
+    Sun: 6,
+    Sunday: 6,
   };
 
   // Case A: array items carry a `day` label and per-type counts
-  const looksLikeLabeledWeek = typeof raw[0] === 'object' && raw[0] && 'day' in raw[0];
+  const looksLikeLabeledWeek =
+    typeof raw[0] === "object" && raw[0] && "day" in raw[0];
   if (looksLikeLabeledWeek) {
     raw.forEach((row: any) => {
       const idx = dayIdx[String(row.day)] ?? -1;
       if (idx >= 0 && idx < 7) {
         // Sum all numeric fields except `day`
         const total = Object.keys(row).reduce((sum, key) => {
-          if (key === 'day') return sum;
+          if (key === "day") return sum;
           const v = Number((row as any)[key]);
           return sum + (isFinite(v) ? v : 0);
         }, 0);
@@ -77,7 +87,7 @@ const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
       const rawDate = d?.date ?? d?.day ?? d; // support simple arrays of dates too
       let parsed: Date | null = null;
       if (rawDate instanceof Date) parsed = rawDate;
-      else if (typeof rawDate === 'string') {
+      else if (typeof rawDate === "string") {
         // Try parse ISO or y-m-d; ignore 3-letter day names here
         const maybe = new Date(rawDate);
         parsed = isNaN(maybe.getTime()) ? null : maybe;
@@ -94,7 +104,10 @@ const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
   cleaned.forEach((it: any) => {
     const t = (it.date as Date).getTime();
     if (t >= startTs && t <= endTs) {
-      const idx = Math.max(0, Math.min(6, Math.floor((t - startTs) / MS_PER_DAY)));
+      const idx = Math.max(
+        0,
+        Math.min(6, Math.floor((t - startTs) / MS_PER_DAY))
+      );
       buckets[idx].count += it.count;
     }
   });
@@ -107,7 +120,8 @@ const { width } = Dimensions.get("window");
 export default function Dashboard() {
   const { colors, spacing, typography } = useTheme();
   // Safe chart width helpers (avoid NaN from undefined spacing values)
-  const chartHorizontalPadding = (spacing as any)?.lg ?? (spacing as any)?.l ?? 16;
+  const chartHorizontalPadding =
+    (spacing as any)?.lg ?? (spacing as any)?.l ?? 16;
   const chartWidth = Math.max(280, width - chartHorizontalPadding * 2);
   const nav = useNavigation();
   const flatListRef = useRef<FlatList>(null);
@@ -121,7 +135,10 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [daySummary, setDaySummary] = useState<string>("");
   const [streak, setStreak] = useState<number>(0);
+  const fasting = useFastingState();
+  const [weekEntries, setWeekEntries] = useState<any[]>([]);
 
+  // console.log("ChartData>>>", chartData);
   const isMiddayOnWeekEnd = (date: Date) => {
     const isSunday = date.getDay() === 0; // Sunday = 0, Monday = 1
     const now = new Date();
@@ -259,8 +276,11 @@ export default function Dashboard() {
     });
 
     fastingEntries.forEach((entry) => {
-      if (entry.duration && entry.duration > bestFastingMinutes)
-        bestFastingMinutes = entry.duration;
+      (entry.segments ?? []).forEach((s: any) => {
+        const sec = Number(s.duration_seconds ?? s.durationSeconds ?? 0);
+        const mins = Math.round(sec / 60);
+        if (mins > bestFastingMinutes) bestFastingMinutes = mins;
+      });
     });
 
     let highlight = "";
@@ -386,6 +406,7 @@ export default function Dashboard() {
 
     if (!user?.id) {
       setChartData([]);
+      setWeekEntries([]);
       return;
     }
 
@@ -401,7 +422,10 @@ export default function Dashboard() {
       .lte("date", format(weekEnd, "yyyy-MM-dd"));
 
     const weekData = error || !Array.isArray(data) ? [] : data;
-    setChartData(weekData);
+    setWeekEntries(weekData);
+    setChartData(
+      weekData.filter((e) => ["Gym", "Run", "Cycle", "Swim"].includes(e.type))
+    );
   };
 
   const refreshWeekData = async () => {
@@ -433,8 +457,8 @@ export default function Dashboard() {
       hour < 12
         ? "Good Morning"
         : hour < 18
-          ? "Good Afternoon"
-          : "Good Evening";
+        ? "Good Afternoon"
+        : "Good Evening";
     return name ? `${base}, ${name}!` : `${base}.`;
   };
 
@@ -480,6 +504,182 @@ export default function Dashboard() {
 
     setInspirations(selected);
   }, []);
+
+  const dayBounds = (d: Date) => {
+    const start = new Date(d);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 1);
+    return { start, end };
+  };
+
+  type FastSeg = {
+    label: string;
+    start: Date;
+    end: Date;
+    durationSeconds: number;
+    completed: boolean
+  };
+
+  const getFastSlicesForDay = (
+    date: Date,
+    weekEntries: any[]
+  ): { seg: FastSeg; highlight: boolean }[] => {
+    const { start: dayStart, end: dayEnd } = dayBounds(date);
+    const fasting = weekEntries.filter(
+      (e) => e.type === "Fasting" && Array.isArray(e.segments)
+    );
+
+    const out: { seg: FastSeg; highlight: boolean }[] = [];
+    fasting.forEach((e) => {
+      e.segments.forEach((s: any) => {
+        const sStart = new Date(s.start);
+        const sEnd = new Date(s.end);
+        // overlaps this day?
+        if (sEnd > dayStart && sStart < dayEnd) {
+          const completed = s.completed === false ? false : true;
+
+          out.push({
+            seg: {
+              label: s.label ?? e.label ?? "Fast",
+              start: sStart,
+              end: sEnd,
+              durationSeconds: Number(
+                s.duration_seconds ?? s.durationSeconds ?? 0
+              ),
+              completed,
+            },
+            // highlight on the actual completion day (end falls inside this day)
+            highlight: completed && sEnd >= dayStart && sEnd < dayEnd,
+          });
+        }
+      });
+    });
+
+    // sort for stable order (end time)
+    return out.sort((a, b) => a.seg.end.getTime() - b.seg.end.getTime());
+  };
+
+  // const getFastingSegmentsForDay = (d: Date, week: any[]): FastingSegment[] => {
+  //   const { start, end } = dayBounds(d);
+  //   const inWeek = week.filter(
+  //     (e) => e.type === "Fasting" && Array.isArray(e.segments)
+  //   );
+  //   const segs: FastingSegment[] = [];
+
+  //   inWeek.forEach((e) => {
+  //     e.segments.forEach((s: any) => {
+  //       const sStart = new Date(s.start);
+  //       const sEnd = new Date(s.end);
+  //       // overlap test: [sStart, sEnd) intersects this day
+  //       if (sEnd > start && sStart < end) {
+  //         segs.push({
+  //           label: s.label ?? e.label ?? "Fast",
+  //           start: sStart,
+  //           end: sEnd,
+  //           durationSeconds: Number(
+  //             s.duration_seconds ?? s.durationSeconds ?? 0
+  //           ),
+  //           completedOn: sEnd >= start && sEnd < end,
+  //           startedOn: sStart >= start && sStart < end,
+  //           spans: sStart < start || sEnd > end,
+  //         });
+  //       }
+  //     });
+  //   });
+
+  //   // sort by end time for stable display
+  //   return segs.sort((a, b) => a.end.getTime() - b.end.getTime());
+  // };
+
+  const fmtHm = (d: Date) =>
+    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const fmtDur = (sec: number) => {
+    const h = Math.floor(sec / 3600),
+      m = Math.floor((sec % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  // const renderFastingCompletions = () => {
+  //   if (!selectedDate) return null;
+  //   const segs = getFastingSegmentsForDay(selectedDate, weekEntries);
+  //   if (segs.length === 0) return null;
+
+  //   const { start: dayStart, end: dayEnd } = dayBounds(selectedDate);
+  //   const dayMs = dayEnd.getTime() - dayStart.getTime();
+
+  //   return (
+  //     <View style={{ gap: 10, marginBottom: 12 }}>
+  //       {segs.map((s, idx) => {
+  //         const visStart = Math.max(dayStart.getTime(), s.start.getTime());
+  //         const visEnd = Math.min(dayEnd.getTime(), s.end.getTime());
+  //         const leftPct = ((visStart - dayStart.getTime()) / dayMs) * 100;
+  //         const widthPct = Math.max(2, ((visEnd - visStart) / dayMs) * 100);
+
+  //         const title = s.completedOn
+  //           ? "🎉 Fast Completed"
+  //           : s.startedOn
+  //           ? "⏳ Fast Started"
+  //           : "↔︎ Fast Spanning";
+  //         const subtitle = `${s.label} · ${fmtDur(s.durationSeconds)}${
+  //           s.spans ? " · spans days" : ""
+  //         }`;
+
+  //         return (
+  //           <View
+  //             key={idx}
+  //             style={[
+  //               styles.fastingDoneCard,
+  //               { backgroundColor: colors.surface, borderColor: colors.border },
+  //             ]}
+  //           >
+  //             <View
+  //               style={{
+  //                 flexDirection: "row",
+  //                 justifyContent: "space-between",
+  //                 alignItems: "center",
+  //                 marginBottom: 6,
+  //               }}
+  //             >
+  //               <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>
+  //                 {title}
+  //               </Text>
+  //               <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+  //                 {fmtHm(s.start)} → {fmtHm(s.end)}
+  //               </Text>
+  //             </View>
+
+  //             <Text style={{ color: colors.textSecondary, marginBottom: 10 }}>
+  //               {subtitle}
+  //             </Text>
+
+  //             {/* Mini timeline that shows just the portion of the fast inside this day */}
+  //             <View
+  //               style={[
+  //                 styles.timelineTrack,
+  //                 {
+  //                   backgroundColor: colors.inputBackground,
+  //                   borderColor: colors.border,
+  //                 },
+  //               ]}
+  //             >
+  //               <View
+  //                 style={[
+  //                   styles.timelineFill,
+  //                   {
+  //                     left: `${leftPct}%`,
+  //                     width: `${widthPct}%`,
+  //                     backgroundColor: colors.primary,
+  //                   },
+  //                 ]}
+  //               />
+  //             </View>
+  //           </View>
+  //         );
+  //       })}
+  //     </View>
+  //   );
+  // };
 
   const renderInspirationCarousel = () => (
     <View>
@@ -548,6 +748,146 @@ export default function Dashboard() {
     </View>
   );
 
+  const formatHMS = (s: number) => {
+    const h = Math.floor(s / 3600),
+      m = Math.floor((s % 3600) / 60),
+      ss = s % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(
+      2,
+      "0"
+    )}:${String(ss).padStart(2, "0")}`;
+  };
+
+  const renderFastingStatusCard = () => {
+    const today = new Date();
+    if (!selectedDate || !isSameDay(selectedDate, today)) return null;
+
+    if (
+      fasting.hydrating ||
+      !fasting.active ||
+      !fasting.startISO ||
+      !fasting.label
+    )
+      return null;
+
+    const start = new Date(fasting.startISO);
+    const end = new Date(start.getTime() + fasting.duration * 1000);
+    const startLabel = start.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const endLabel = end.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    const phaseEmoji =
+      fasting.elapsed < 4 * 3600
+        ? "🍽️"
+        : fasting.elapsed < 8 * 3600
+        ? "🔥"
+        : fasting.elapsed < 12 * 3600
+        ? "🥑"
+        : "🧠";
+
+    return (
+      <View
+        style={[styles.card, { backgroundColor: colors.surface, marginTop: 2 }]}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginBottom: 10,
+            justifyContent: "space-between",
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 18,
+              fontWeight: "800",
+              color: colors.textPrimary,
+            }}
+          >
+            {phaseEmoji} {fasting.label} Fast
+          </Text>
+          <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+            {startLabel} → {endLabel}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.progressTrack,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.progressFill,
+              {
+                backgroundColor: colors.primary,
+                width: `${fasting.pct * 100}%`,
+              },
+            ]}
+          />
+        </View>
+
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            marginTop: 10,
+          }}
+        >
+          <View>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: 12,
+                marginBottom: 2,
+              }}
+            >
+              Elapsed
+            </Text>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontVariant: ["tabular-nums"],
+                fontSize: 18,
+              }}
+            >
+              {formatHMS(fasting.elapsed)}
+            </Text>
+          </View>
+          <View style={{ alignItems: "flex-end" }}>
+            <Text
+              style={{
+                color: colors.textSecondary,
+                fontSize: 12,
+                marginBottom: 2,
+              }}
+            >
+              Remaining
+            </Text>
+            <Text
+              style={{
+                color: colors.textPrimary,
+                fontVariant: ["tabular-nums"],
+                fontSize: 18,
+              }}
+            >
+              {formatHMS(fasting.remaining)}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   const renderDateContent = () => {
     const now = new Date();
     const getSummaryLabel = () => {
@@ -606,7 +946,11 @@ export default function Dashboard() {
         <View
           style={[
             styles.card,
-            { backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+            {
+              backgroundColor: colors.surface,
+              alignItems: "center",
+              justifyContent: "center",
+            },
           ]}
         >
           <Text
@@ -628,7 +972,8 @@ export default function Dashboard() {
               marginBottom: spacing.md,
             }}
           >
-            {days > 0 ? `${days}d ` : ""}{hours}h {minutes}m {seconds}s
+            {days > 0 ? `${days}d ` : ""}
+            {hours}h {minutes}m {seconds}s
           </Text>
         </View>
       );
@@ -671,8 +1016,14 @@ export default function Dashboard() {
     const counts = buckets.map((b) => Number(b.count) || 0);
     const total = counts.reduce((s, n) => s + n, 0);
     const activeDays = counts.filter((n) => n > 0).length;
-    const bestIdx = counts.reduce((best, n, i) => (n > counts[best] ? i : best), 0);
-    const best = { index: counts.some((n) => n > 0) ? bestIdx : -1, value: counts[bestIdx] || 0 };
+    const bestIdx = counts.reduce(
+      (best, n, i) => (n > counts[best] ? i : best),
+      0
+    );
+    const best = {
+      index: counts.some((n) => n > 0) ? bestIdx : -1,
+      value: counts[bestIdx] || 0,
+    };
     const goal = 5; // soft weekly goal
     const pct = goal > 0 ? Math.min(1, total / goal) : 0;
     return { total, activeDays, best, goal, pct };
@@ -687,7 +1038,10 @@ export default function Dashboard() {
         value:
           weeklyStats.best.index >= 0
             ? format(
-                addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index),
+                addDays(
+                  startOfWeek(new Date(), { weekStartsOn: 1 }),
+                  weeklyStats.best.index
+                ),
                 "EEE"
               )
             : "—",
@@ -704,9 +1058,13 @@ export default function Dashboard() {
               { backgroundColor: colors.surface, borderColor: colors.border },
               i !== items.length - 1 ? { marginRight: 10 } : { marginRight: 0 },
             ]}
-         >
-            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>{it.label}</Text>
-            <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{it.value}</Text>
+          >
+            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>
+              {it.label}
+            </Text>
+            <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>
+              {it.value}
+            </Text>
           </View>
         ))}
       </View>
@@ -714,15 +1072,30 @@ export default function Dashboard() {
   };
 
   const renderWeeklyAchievements = () => (
-    <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 16, marginBottom: 8 }}>
+    <Text
+      style={{
+        color: colors.textPrimary,
+        fontWeight: "700",
+        fontSize: 16,
+        marginBottom: 8,
+      }}
+    >
       Weekly Achievements
     </Text>
   );
 
   const renderGoalProgress = () => (
     <View style={{ marginTop: 10 }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>Weekly Goal</Text>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginBottom: 6,
+        }}
+      >
+        <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+          Weekly Goal
+        </Text>
         <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
           {Math.round(weeklyStats.pct * 100)}%
         </Text>
@@ -730,13 +1103,19 @@ export default function Dashboard() {
       <View
         style={[
           styles.progressTrack,
-          { backgroundColor: colors.inputBackground, borderColor: colors.border },
+          {
+            backgroundColor: colors.inputBackground,
+            borderColor: colors.border,
+          },
         ]}
       >
         <View
           style={[
             styles.progressFill,
-            { backgroundColor: colors.primary, width: `${weeklyStats.pct * 100}%` },
+            {
+              backgroundColor: colors.primary,
+              width: `${weeklyStats.pct * 100}%`,
+            },
           ]}
         />
       </View>
@@ -749,7 +1128,13 @@ export default function Dashboard() {
   const renderDayLabels = () => {
     const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     return (
-      <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 8 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          marginTop: 8,
+        }}
+      >
         {labels.map((l) => (
           <Text
             key={l}
@@ -813,7 +1198,7 @@ export default function Dashboard() {
               marginLeft: 5,
               fontWeight: "600",
               color: colors.textPrimary,
-              fontSize: 17
+              fontSize: 17,
             }}
           >
             {streak}
@@ -857,7 +1242,10 @@ export default function Dashboard() {
             snapToInterval={width}
             decelerationRate="fast"
             snapToAlignment="start"
-            contentContainerStyle={[styles.dateStrip, { marginTop: 0, marginBottom: 18 }]}
+            contentContainerStyle={[
+              styles.dateStrip,
+              { marginTop: 0, marginBottom: 18 },
+            ]}
             renderItem={({ item }) => {
               const dayLabel = format(item, "E");
               const dateNumber = format(item, "d");
@@ -870,7 +1258,9 @@ export default function Dashboard() {
                   style={[
                     styles.dateItem,
                     {
-                      backgroundColor: isSelected ? colors.surface : "transparent",
+                      backgroundColor: isSelected
+                        ? colors.surface
+                        : "transparent",
                       borderColor: isSelected ? colors.border : "transparent",
                       paddingVertical: 6,
                       paddingHorizontal: 10,
@@ -882,8 +1272,8 @@ export default function Dashboard() {
                       color: isSelected
                         ? colors.textPrimary
                         : isGreyedOut
-                          ? "#A0A0A0"
-                          : colors.textSecondary,
+                        ? "#A0A0A0"
+                        : colors.textSecondary,
                       fontWeight: isSelected ? "700" : "500",
                       textAlign: "center",
                       fontSize: 13.5,
@@ -896,8 +1286,8 @@ export default function Dashboard() {
                       color: isSelected
                         ? colors.textPrimary
                         : isGreyedOut
-                          ? "#A0A0A0"
-                          : colors.textSecondary,
+                        ? "#A0A0A0"
+                        : colors.textSecondary,
                       fontWeight: isSelected ? "700" : "500",
                       fontSize: 15,
                       textAlign: "center",
@@ -912,13 +1302,45 @@ export default function Dashboard() {
 
           {renderDateContent()}
 
+          {renderFastingStatusCard()}
+          {selectedDate &&
+            (() => {
+              const { start: dayStart, end: dayEnd } = dayBounds(selectedDate);
+              const fastSlices = getFastSlicesForDay(selectedDate, weekEntries);
+              if (fastSlices.length === 0) return null;
+              return (
+                <View style={{ gap: 12, marginBottom: 12 }}>
+                  {fastSlices.map(({ seg, highlight }, i) => (
+                    <FastCelebrationCard
+                      key={`${seg.start.toISOString()}-${i}`}
+                      label={seg.label}
+                      start={seg.start}
+                      end={seg.end}
+                      durationSeconds={seg.durationSeconds}
+                      dayStart={dayStart}
+                      dayEnd={dayEnd}
+                      highlightCompletion={highlight}
+                      completed={seg.completed}
+                    />
+                  ))}
+                </View>
+              );
+            })()}
+
           {renderWeeklyAchievements()}
           {renderWeeklyKPI()}
 
           {/* Themed weekly chart section */}
-          <View style={[styles.chartCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View
+            style={[
+              styles.chartCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ]}
+          >
             <View style={{ marginVertical: 20 }}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+              <Text
+                style={[styles.sectionTitle, { color: colors.textPrimary }]}
+              >
                 Weekly Activity
               </Text>
               {(() => {
@@ -929,12 +1351,25 @@ export default function Dashboard() {
 
                 return (
                   <View style={{ marginTop: 14 }}>
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", height: BAR_MAX_H + 8 }}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "flex-end",
+                        height: BAR_MAX_H + 8,
+                      }}
+                    >
                       {buckets.map((b, i) => {
                         const h = Math.round((b.count / max) * BAR_MAX_H);
                         const has = b.count > 0;
                         return (
-                          <View key={i} style={{ alignItems: "center", width: (chartWidth - 32) / 7 }}>
+                          <View
+                            key={i}
+                            style={{
+                              alignItems: "center",
+                              width: (chartWidth - 32) / 7,
+                            }}
+                          >
                             <View
                               style={{
                                 width: 16,
@@ -957,7 +1392,13 @@ export default function Dashboard() {
                                 }}
                               />
                             </View>
-                            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
+                            <Text
+                              style={{
+                                color: colors.textSecondary,
+                                fontSize: 12,
+                                marginTop: 6,
+                              }}
+                            >
                               {labels[i]}
                             </Text>
                           </View>
@@ -1116,6 +1557,24 @@ const styles = StyleSheet.create({
     //bottom: -20,
     zIndex: 10,
     padding: 8,
-    right: 2
+    right: 2,
+  },
+  fastingDoneCard: {
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  timelineTrack: {
+    height: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: "hidden",
+    position: "relative",
+  },
+  timelineFill: {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    borderRadius: 999,
   },
 });

@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { useTheme } from "../theme/theme";
 
 interface Props {
-  state: "Digesting" | "Fat Burning" | "Ketosis" | "Deep Ketosis";
+  state: "Idle" | "🍽️ Digesting" | "🔥 Fat Burning" | "🥑 Ketosissis" | "🧠 Deep Ketosis";
   label: string;
 }
 

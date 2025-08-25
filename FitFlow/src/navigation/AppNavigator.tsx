@@ -8,13 +8,17 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import React from "react";
 import { StyleSheet, useColorScheme } from "react-native";
 
+import FastingCompletionObserver from "../components/FastingCompletionObserver";
 import { useAuth } from "../hooks/useAuth";
 import Onboarding from "../screens/Onboarding";
 import SignIn from "../screens/SignIn";
 import MainTabs from "./MainTabs";
 import { navigationRef } from "./navigationRef";
+import { RootStackParamList } from "./types";
 
-const Stack = createNativeStackNavigator();
+// const Stack = createNativeStackNavigator();
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
   const { user, loading, hasOnboarded } = useAuth();
@@ -27,6 +31,7 @@ export default function AppNavigator() {
       theme={scheme === "dark" ? DarkTheme : DefaultTheme}
       ref={navigationRef}
     >
+      <FastingCompletionObserver />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
           
