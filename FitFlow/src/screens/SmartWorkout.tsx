@@ -37,11 +37,7 @@ async function getUserProfile() {
   // We try to read the plan/tier and fitness context. Unknown fields are optional.
   const { data, error } = await supabase
     .from('profiles')
-<<<<<<< HEAD
-    .select('age, gender, goals')
-=======
     .select('age, gender, goals, fitness_level, weight_kg, height_cm, plan, membership_tier')
->>>>>>> fix/history-dashboard
     .single()
   if (error) throw error
   return data as Partial<{
@@ -238,7 +234,7 @@ export default function SmartWorkout() {
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  function parseScheduleTextToDays(text: string): Array<{ warmUp: string[]; mainSet: string[]; coolDown: string[] }> {
+  function parseScheduleTextToDays(text: string): { warmUp: string[]; mainSet: string[]; coolDown: string[] }[] {
     // Very forgiving parser for LLM plaintext schedules.
     // Splits by blank lines into "days", then looks for section headers;
     // otherwise treats all lines as main set.
@@ -248,7 +244,7 @@ export default function SmartWorkout() {
       .map(b => b.split('\n').map(l => l.trim()).filter(Boolean))
       .filter(arr => arr.length > 0)
 
-    const days: Array<{ warmUp: string[]; mainSet: string[]; coolDown: string[] }> = []
+    const days: { warmUp: string[]; mainSet: string[]; coolDown: string[] }[] = []
 
     for (const lines of blocks) {
       const warmUp: string[] = []
@@ -286,7 +282,7 @@ export default function SmartWorkout() {
     return days
   }
 
-  function extractScheduleDays(raw: any): Array<{ warmUp: string[]; mainSet: string[]; coolDown: string[] }> {
+  function extractScheduleDays(raw: any): { warmUp: string[]; mainSet: string[]; coolDown: string[] }[] {
     // Accepts multiple shapes from the AI: array, object with schedule/days/plan, or plaintext.
     if (Array.isArray(raw)) {
       return raw.map((d: any) => ({
@@ -450,7 +446,7 @@ export default function SmartWorkout() {
       }
 
       // Lazy require so bundling the JS module doesn't run unless available
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+       
       const { AdMobInterstitial } = require('expo-ads-admob')
       if (!AdMobInterstitial?.setAdUnitID) return
 
@@ -506,18 +502,6 @@ export default function SmartWorkout() {
       const ctx = tier === 'premium_plus' ? premiumPlusContext : {}
 
       if (view === 'Workout') {
-<<<<<<< HEAD
-        const result = await generateWorkout(prompt, )
-        setWorkout({ ...result, description: result.description || "This personalized workout is crafted to push your limits while keeping things enjoyable. Expect a progression that builds strength, improves endurance, and leaves you feeling accomplished. Listen to your body, and don’t forget to breathe through each rep." })
-      } else if (view === 'Schedule') {
-        const raw = await generateSchedule(prompt, )
-        const sanitized = (Array.isArray(raw) ? raw : []).map((day: any) => ({
-          date: typeof day.date === 'string' ? day.date : '',
-          warmUp: Array.isArray(day.warmUp) ? day.warmUp : [],
-          mainSet: Array.isArray(day.mainSet) ? day.mainSet : [],
-          coolDown: Array.isArray(day.coolDown) ? day.coolDown : [],
-        }))
-=======
         const result = await generateWorkout(prompt, ctx as any)
         const enriched: Workout = {
           ...result,
@@ -639,17 +623,12 @@ export default function SmartWorkout() {
           } as ScheduleDay
         })
 
->>>>>>> fix/history-dashboard
         setSchedule(sanitized)
         setWorkout(null)
         setNutrition(null)
         await saveGeneration('Schedule', prompt, sanitized)
       } else {
-<<<<<<< HEAD
-        const result = await generateNutrition(prompt, )
-=======
         const result = await generateNutrition(prompt, ctx as any)
->>>>>>> fix/history-dashboard
         setNutrition(result)
         setWorkout(null)
         setSchedule([])
