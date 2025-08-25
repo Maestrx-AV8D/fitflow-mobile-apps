@@ -404,6 +404,23 @@ export default function Dashboard() {
     setChartData(weekData);
   };
 
+  const refreshWeekData = async () => {
+    // Limit data to the *current* week (Mon..Sun)
+    const today = new Date();
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const weekEnd = addDays(weekStart, 6);
+
+    const { data, error } = await supabase
+      .from("entries")
+      .select("*")
+      .gte("date", format(weekStart, "yyyy-MM-dd"))
+      .lte("date", format(weekEnd, "yyyy-MM-dd"));
+
+    const weekData = error || !Array.isArray(data) ? [] : data;
+    // Feed raw entries; makeWeeklyBuckets() will normalize by date
+    setChartData(weekData);
+  };
+
   const generateDateRange = () => {
     const today = new Date();
     const start = startOfWeek(today, { weekStartsOn: 1 }); // Monday
