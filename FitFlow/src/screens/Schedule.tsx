@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import { useNavigation, useRoute } from '@react-navigation/native';
-=======
-import { CompositeNavigationProp, useNavigation } from "@react-navigation/native";
->>>>>>> f2db125 (fix fasting page and added favourites to schedule)
+import { CompositeNavigationProp, useNavigation, useRoute } from '@react-navigation/native';
 import {
   add,
   addDays,
@@ -51,7 +47,7 @@ type FavTemplate = {
 
 const FAV_KEY = "schedule.favorites.v1";
 
-type ImportedScheduleParam = Array<{
+type ImportedScheduleParam = {
   date: string;
   warmUp?: string[];
   mainSet?: string[];
@@ -59,7 +55,7 @@ type ImportedScheduleParam = Array<{
   type?: 'Gym' | 'Run' | 'Swim' | 'Cycle' | 'Other';
   time?: string;
   distance?: string;
-}>;
+}[];
 
 const cardShadow = {
   shadowColor: "#000",
@@ -74,13 +70,8 @@ type ScheduleNav = CompositeNavigationProp<
 >;
 
 export default function Schedule() {
-<<<<<<< HEAD
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-=======
-  // const navigation = useNavigation<any>();
-  const navigation = useNavigation<ScheduleNav>();
->>>>>>> f2db125 (fix fasting page and added favourites to schedule)
   const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<any[]>([]);
   const [showCompleted, setShowCompleted] = useState(true);
@@ -134,7 +125,6 @@ export default function Schedule() {
     })();
   }, []);
 
-<<<<<<< HEAD
   // Import schedule passed in from SmartWorkout ("Import All to Schedule")
   useEffect(() => {
     const imported: ImportedScheduleParam | undefined = (route as any)?.params?.importedSchedule;
@@ -177,10 +167,7 @@ export default function Schedule() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.importedSchedule]);
 
-  const persist = async (newPlan: Array<any>) => {
-=======
   const persist = async (newPlan: any[]) => {
->>>>>>> d179b2a (fasting and schedule fix)
     setPlan(newPlan);
     await saveSchedule(newPlan);
   };
