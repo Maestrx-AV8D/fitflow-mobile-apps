@@ -25,9 +25,8 @@ import { allInspirations, Inspiration } from "../constants/inspirations";
 import {
   getEntryCount,
   getExercisesCompleted,
-  getLast7DaysWorkouts,
   getLatestWorkoutDate,
-  supabase,
+  supabase
 } from "../lib/api";
 import { useTheme } from "../theme/theme";
 
@@ -35,23 +34,69 @@ import { useTheme } from "../theme/theme";
 type WeeklyPoint = { date: Date; count: number };
 
 const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
-  const cleaned = (Array.isArray(raw) ? raw : []).map((d: any) => {
-    const rawDate = d?.date ?? d?.day ?? d;
-    const parsed = rawDate instanceof Date ? rawDate : new Date(rawDate);
-    const valid = parsed && !isNaN(parsed.getTime());
-    const val = Number(d?.count ?? d?.value ?? d) || 0;
-    return { date: valid ? parsed : null, count: isFinite(val) ? val : 0 };
-  }).filter((it: any) => it.date);
-
   const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
   const buckets: WeeklyPoint[] = Array.from({ length: 7 }, (_, i) => ({
     date: addDays(weekStart, i),
     count: 0,
   }));
 
+  if (!Array.isArray(raw) || raw.length === 0) return buckets;
+
+  // Helper: map day label -> index (Mon=0 .. Sun=6)
+  const dayIdx: Record<string, number> = {
+    Mon: 0, Monday: 0,
+    Tue: 1, Tuesday: 1,
+    Wed: 2, Wednesday: 2,
+    Thu: 3, Thursday: 3,
+    Fri: 4, Friday: 4,
+    Sat: 5, Saturday: 5,
+    Sun: 6, Sunday: 6,
+  };
+
+  // Case A: array items carry a `day` label and per-type counts
+  const looksLikeLabeledWeek = typeof raw[0] === 'object' && raw[0] && 'day' in raw[0];
+  if (looksLikeLabeledWeek) {
+    raw.forEach((row: any) => {
+      const idx = dayIdx[String(row.day)] ?? -1;
+      if (idx >= 0 && idx < 7) {
+        // Sum all numeric fields except `day`
+        const total = Object.keys(row).reduce((sum, key) => {
+          if (key === 'day') return sum;
+          const v = Number((row as any)[key]);
+          return sum + (isFinite(v) ? v : 0);
+        }, 0);
+        buckets[idx].count += total;
+      }
+    });
+    return buckets;
+  }
+
+  // Case B: generic normalization: support `{date,count}` or raw entries with `date`
+  const cleaned = raw
+    .map((d: any) => {
+      const rawDate = d?.date ?? d?.day ?? d; // support simple arrays of dates too
+      let parsed: Date | null = null;
+      if (rawDate instanceof Date) parsed = rawDate;
+      else if (typeof rawDate === 'string') {
+        // Try parse ISO or y-m-d; ignore 3-letter day names here
+        const maybe = new Date(rawDate);
+        parsed = isNaN(maybe.getTime()) ? null : maybe;
+      }
+      const val = Number(d?.count ?? d?.value ?? 1); // default to 1 per entry if no count
+      return { date: parsed, count: isFinite(val) ? val : 0 };
+    })
+    .filter((it: any) => it.date);
+
+  const startTs = weekStart.getTime();
+  const endTs = addDays(weekStart, 6).getTime();
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
   cleaned.forEach((it: any) => {
-    const idx = Math.max(0, Math.min(6, Math.floor((it.date.getDay() + 6) % 7)));
-    buckets[idx].count += isFinite(it.count) ? it.count : 0;
+    const t = (it.date as Date).getTime();
+    if (t >= startTs && t <= endTs) {
+      const idx = Math.max(0, Math.min(6, Math.floor((t - startTs) / MS_PER_DAY)));
+      buckets[idx].count += it.count;
+    }
   });
 
   return buckets;
@@ -100,7 +145,7 @@ export default function Dashboard() {
       setExercisesCompleted(await getExercisesCompleted());
       const latest = await getLatestWorkoutDate();
       setLatestWorkout(latest ? format(new Date(latest), "dd/MM/yyyy") : "—");
-      setChartData(await getLast7DaysWorkouts());
+      await refreshWeekData();
 
       const days = generateDateRange();
       setWeekDays(days);
@@ -133,6 +178,7 @@ export default function Dashboard() {
         .single();
       const userName = data?.full_name?.split(" ")[0] || "";
       setName(userName);
+      await refreshWeekData();
     });
 
     return unsubscribe;
@@ -284,7 +330,7 @@ export default function Dashboard() {
       bestDistance > 0 ? `Longest Distance: ${bestDistance} km` : null,
       bestDuration > 0 ? `Longest Session: ${bestDuration} mins` : null,
       bestFast > 0 ? `Longest Fast: ${bestFast} mins` : null,
-      streak > 0 ? `🔥 ${streak} days steak` : null,
+      streak > 0 ? `🔥 ${streak} days streak` : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -325,10 +371,27 @@ export default function Dashboard() {
     setStreak(streak);
   };
 
+  const refreshWeekData = async () => {
+    // Limit data to the *current* week (Mon..Sun)
+    const today = new Date();
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const weekEnd = addDays(weekStart, 6);
+
+    const { data, error } = await supabase
+      .from("entries")
+      .select("*")
+      .gte("date", format(weekStart, "yyyy-MM-dd"))
+      .lte("date", format(weekEnd, "yyyy-MM-dd"));
+
+    const weekData = error || !Array.isArray(data) ? [] : data;
+    // Feed raw entries; makeWeeklyBuckets() will normalize by date
+    setChartData(weekData);
+  };
+
   const generateDateRange = () => {
     const today = new Date();
-    const start = startOfWeek(today, { weekStartsOn: 1 });
-    return Array.from({ length: 14 }, (_, i) => addDays(addDays(start, -7), i));
+    const start = startOfWeek(today, { weekStartsOn: 1 }); // Monday
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i)); // Mon..Sun only
   };
 
   const getTimeGreeting = () => {
@@ -337,8 +400,8 @@ export default function Dashboard() {
       hour < 12
         ? "Good Morning"
         : hour < 18
-        ? "Good Afternoon"
-        : "Good Evening";
+          ? "Good Afternoon"
+          : "Good Evening";
     return name ? `${base}, ${name}!` : `${base}.`;
   };
 
@@ -573,64 +636,56 @@ export default function Dashboard() {
 
   // ---- Weekly derived stats (for added components; non-destructive)
   const weeklyStats = useMemo(() => {
-    const days = Array.isArray(chartData) ? chartData : [];
-    const total = days.reduce((s: number, v: any) => s + (Number(v?.value ?? v) || 0), 0);
-    const activeDays = days.filter((v: any) => (Number(v?.value ?? v) || 0) > 0).length;
-    let best = { index: -1, value: -1 };
-    days.forEach((v: any, i: number) => {
-      const n = Number(v?.value ?? v) || 0;
-      if (n > best.value) best = { index: i, value: n };
-    });
+    const buckets = makeWeeklyBuckets(chartData);
+    const counts = buckets.map((b) => Number(b.count) || 0);
+    const total = counts.reduce((s, n) => s + n, 0);
+    const activeDays = counts.filter((n) => n > 0).length;
+    const bestIdx = counts.reduce((best, n, i) => (n > counts[best] ? i : best), 0);
+    const best = { index: counts.some((n) => n > 0) ? bestIdx : -1, value: counts[bestIdx] || 0 };
     const goal = 5; // soft weekly goal
     const pct = goal > 0 ? Math.min(1, total / goal) : 0;
     return { total, activeDays, best, goal, pct };
   }, [chartData]);
 
-  const renderWeeklyKPI = () => (
-    <View style={styles.kpiRow}>
-      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Workouts</Text>
-        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{weeklyStats.total}</Text>
+  const renderWeeklyKPI = () => {
+    const items = [
+      { label: "Workouts", value: String(weeklyStats.total) },
+      { label: "Active Days", value: `${weeklyStats.activeDays}/7` },
+      {
+        label: "Best Day",
+        value:
+          weeklyStats.best.index >= 0
+            ? format(
+                addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index),
+                "EEE"
+              )
+            : "—",
+      },
+    ];
+
+    return (
+      <View style={styles.kpiRow}>
+        {items.map((it, i) => (
+          <View
+            key={it.label}
+            style={[
+              styles.kpiCard,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              i !== items.length - 1 ? { marginRight: 10 } : { marginRight: 0 },
+            ]}
+         >
+            <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>{it.label}</Text>
+            <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{it.value}</Text>
+          </View>
+        ))}
       </View>
-      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Active Days</Text>
-        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>{weeklyStats.activeDays}/7</Text>
-      </View>
-      <View style={[styles.kpiCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        <Text style={[styles.kpiLabel, { color: colors.textSecondary }]}>Best Day</Text>
-        <Text style={[styles.kpiValue, { color: colors.textPrimary }]}>
-          {weeklyStats.best.index >= 0 ? format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index), "EEE") : "—"}
-        </Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderWeeklyAchievements = () => (
-    <View style={[styles.card, { backgroundColor: colors.surface }]}>
-      <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 16, marginBottom: 10 }}>
-        Weekly Achievements
-      </Text>
-      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-        <View style={{ flex: 1, marginRight: 8 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Consistency</Text>
-          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
-            {streak} day streak
-          </Text>
-        </View>
-        <View style={{ flex: 1, marginRight: 8 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Most Active</Text>
-          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
-            {weeklyStats.best.index >= 0 ? `${format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weeklyStats.best.index), "EEE")} (${weeklyStats.best.value})` : "—"}
-          </Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>Total Sessions</Text>
-          <Text style={{ color: colors.textPrimary, fontSize: 16, fontWeight: "700" }}>
-            {weeklyStats.total}
-          </Text>
-        </View>
-      </View>
-    </View>
+    <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 16, marginBottom: 8 }}>
+      Weekly Achievements
+    </Text>
   );
 
   const renderGoalProgress = () => (
@@ -703,22 +758,31 @@ export default function Dashboard() {
             justifyContent: "space-between",
             alignItems: "center",
             backgroundColor: colors.background,
-            paddingTop: 54,
+            paddingTop: 67,
+            marginBottom: 0,
           },
         ]}
       >
         <View style={styles.streakBox}>
           <MaterialIcons
             name="local-fire-department"
-            size={20}
-            color="#FF6D00"
+            size={22}
+            color={hasLoggedToday ? "#FF6D00" : "#9E9E9E"} // grey if missed today
           />
+          {!hasLoggedToday && streak > 0 && (
+            <MaterialIcons
+              name="warning"
+              size={16}
+              color={"#FF6D00"} // grey if missed today
+              style={styles.streakWarning}
+            />
+          )}
           <Text
             style={{
               marginLeft: 5,
               fontWeight: "600",
               color: colors.textPrimary,
-              fontSize: 17,
+              fontSize: 17
             }}
           >
             {streak}
@@ -749,7 +813,7 @@ export default function Dashboard() {
       </View>
 
       {/* Scrollable Content */}
-      <View style={{ flex: 1, marginTop: HEADER_HEIGHT + 15 }}>
+      <View style={{ flex: 1, marginTop: HEADER_HEIGHT + 10 }}>
         <ScrollView contentContainerStyle={[styles.container]}>
           {/* Existing date carousel */}
           <FlatList
@@ -787,8 +851,8 @@ export default function Dashboard() {
                       color: isSelected
                         ? colors.textPrimary
                         : isGreyedOut
-                        ? "#A0A0A0"
-                        : colors.textSecondary,
+                          ? "#A0A0A0"
+                          : colors.textSecondary,
                       fontWeight: isSelected ? "700" : "500",
                       textAlign: "center",
                       fontSize: 13.5,
@@ -801,8 +865,8 @@ export default function Dashboard() {
                       color: isSelected
                         ? colors.textPrimary
                         : isGreyedOut
-                        ? "#A0A0A0"
-                        : colors.textSecondary,
+                          ? "#A0A0A0"
+                          : colors.textSecondary,
                       fontWeight: isSelected ? "700" : "500",
                       fontSize: 15,
                       textAlign: "center",
@@ -817,6 +881,7 @@ export default function Dashboard() {
 
           {renderDateContent()}
 
+          {renderWeeklyAchievements()}
           {renderWeeklyKPI()}
 
           {/* Themed weekly chart section */}
@@ -874,8 +939,6 @@ export default function Dashboard() {
             </View>
             {renderGoalProgress()}
           </View>
-
-          {renderWeeklyAchievements()}
 
           {/* Original date-based summary & inspiration remain (preserved functionality) */}
 
@@ -965,14 +1028,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 16,
+    alignItems: "stretch",
   },
   kpiCard: {
     flex: 1,
     borderWidth: 1,
     borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 12,
-    marginRight: 10,
+    minHeight: 72,
+    alignItems: "center",
+    justifyContent: "center",
   },
   kpiLabel: {
     fontSize: 12,

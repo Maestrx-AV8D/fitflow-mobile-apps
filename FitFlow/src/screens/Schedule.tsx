@@ -1,4 +1,4 @@
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   add,
   addDays,
@@ -23,6 +23,16 @@ import { getSchedule, saveSchedule, saveToHistory } from '../lib/api';
 
 import { useTheme } from '../theme/theme';
 
+type ImportedScheduleParam = Array<{
+  date: string;
+  warmUp?: string[];
+  mainSet?: string[];
+  coolDown?: string[];
+  type?: 'Gym' | 'Run' | 'Swim' | 'Cycle' | 'Other';
+  time?: string;
+  distance?: string;
+}>;
+
 const cardShadow = {
   shadowColor: '#000',
   shadowOffset: { width: 0, height: 2 },
@@ -33,6 +43,7 @@ const cardShadow = {
 
 export default function Schedule() {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const [plan, setPlan] = useState<Array<any>>([]);
   const [showCompleted, setShowCompleted] = useState(true);
@@ -57,6 +68,48 @@ export default function Schedule() {
       setPlan(stored);
     })();
   }, []);
+
+  // Import schedule passed in from SmartWorkout ("Import All to Schedule")
+  useEffect(() => {
+    const imported: ImportedScheduleParam | undefined = (route as any)?.params?.importedSchedule;
+    if (!imported || !Array.isArray(imported) || imported.length === 0) return;
+
+    // Map incoming days to our local plan shape
+    const mapped = imported.map((d) => ({
+      date: d.date,                 // expected yyyy-MM-dd
+      type: d.type || 'Gym',
+      done: false,
+      frozen: false,
+      warmUp: (d.warmUp || []).slice(0),
+      mainSet: (d.mainSet || []).slice(0),
+      coolDown: (d.coolDown || []).slice(0),
+      time: d.time,
+      distance: d.distance,
+    }));
+
+    // Replace duplicates by (date + type), keep last occurrence
+    const byKey = new Map<string, any>();
+    [...plan, ...mapped].forEach((item) => {
+      const key = `${item.date}::${item.type}`;
+      byKey.set(key, item);
+    });
+    const merged = Array.from(byKey.values()).sort(
+      (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()
+    );
+
+    (async () => {
+      await persist(merged);
+      try {
+        Alert.alert('Imported', `Added ${mapped.length} day${mapped.length === 1 ? '' : 's'} to your schedule.`);
+      } catch {}
+    })();
+
+    // Clear the param so it won't re-import when navigating back
+    try {
+      (navigation as any).setParams({ importedSchedule: undefined });
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route?.params?.importedSchedule]);
 
   const persist = async (newPlan: Array<any>) => {
     setPlan(newPlan);

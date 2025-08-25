@@ -224,6 +224,42 @@ export async function saveSchedule(
 }
 
 // ————————————————————————————————————————————————————————————————————————————————
+// ——— Activity detection & JSON helpers ———
+type Activity = 'Gym' | 'Run' | 'Swim' | 'Cycle' | 'Other'
+
+function detectActivity(prompt: string): Activity {
+  const p = prompt.toLowerCase()
+  if (/\b(run|jog|intervals?|tempo|marathon|5k|10k|track)\b/.test(p)) return 'Run'
+  if (/\b(swim|pool|laps?|freestyle|butterfly|breaststroke)\b/.test(p)) return 'Swim'
+  if (/\b(cycle|bike|bicycle|spin|watt|cadence)\b/.test(p)) return 'Cycle'
+  if (/\b(gym|strength|weights?|hypertrophy|deadlifts?|squats?|bench)\b/.test(p)) return 'Gym'
+  return 'Other'
+}
+
+function clampTo14Days<T extends { date?: string }>(items: T[], startISO?: string): T[] {
+  if (!items?.length) return []
+  // Ensure we don't exceed 14 days from the first date (or provided start date)
+  const start = startISO ? new Date(startISO) : new Date(items[0].date ?? Date.now())
+  const limit = new Date(start)
+  limit.setDate(limit.getDate() + 13)
+  return items.filter(it => {
+    const d = it.date ? new Date(it.date) : start
+    return d <= limit
+  })
+}
+
+function safeExtractJSON(text: string): any | null {
+  if (!text) return null
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end === -1 || end <= start) return null
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    return null
+  }
+}
+
 // OpenAI-powered “SmartWorkout”
 const OPENAI_KEY = Constants.expoConfig?.extra?.OPENAI_KEY as string
 
@@ -248,25 +284,107 @@ async function chatCompletion(system: string, user: string) {
 }
 
 export async function generateWorkout(prompt: string) {
+  const activity = detectActivity(prompt)
   const system = `
-You’re a certified fitness coach. Always return JSON with:
+You’re a certified fitness coach.
+Tailor the workout for activity: "${activity}".
+Always return JSON with:
 {
+  "activity": "Gym|Run|Swim|Cycle|Other",
   "warmUp": [string, …],
   "mainSet": [string, …],
   "coolDown": [string, …]
 }
-All values should be string arrays.
-`
+All values must be present. Keep lists concise (3–8 items each).`
   const txt = await chatCompletion(system, prompt)
-  const json = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
-  return json
+  const obj = safeExtractJSON(txt)
+  if (obj) {
+    // Ensure activity is set
+    obj.activity = obj.activity || activity
+    return obj
+  }
+  // Minimal fallback
+  return {
+    activity,
+    warmUp: ['5–10 min easy prep'],
+    mainSet: ['20–30 min steady work'],
+    coolDown: ['5–10 min easy finish']
+  }
 }
 
 export async function generateSchedule(prompt: string) {
-  const system = `You’re a certified fitness coach. Return JSON { "plan": [ … ] } with date, warmUp, mainSet, coolDown.`
-  const txt = await chatCompletion(system, prompt)
-  const obj = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
-  return obj.plan || []
+  const activity = detectActivity(prompt)
+  const system = `
+You’re a certified fitness coach.
+Create a schedule for activity: "${activity}" only.
+HARD RULES:
+- Maximum length: 14 days total.
+- Output strictly valid JSON with this shape:
+  {
+    "plan": [
+      {
+        "date": "YYYY-MM-DD",
+        "activity": "Gym|Run|Swim|Cycle|Other",
+        "warmUp": [string, ...],
+        "mainSet": [string, ...],
+        "coolDown": [string, ...],
+        "notes": string
+      }
+    ]
+  }
+- "date" must be calendar dates in ISO "YYYY-MM-DD" (British users will see local format later).
+- "activity" MUST be "${activity}" for every item.
+- Keep items concise and actionable.`
+  const userPrompt = `${prompt}
+
+Please generate at most 14 days. If the request exceeds 14 days, summarise to fit within 14 days.`
+
+  // First attempt
+  let txt = await chatCompletion(system, userPrompt)
+  let obj = safeExtractJSON(txt)
+
+  // Retry once with stricter instruction if needed
+  if (!obj?.plan) {
+    const strictSystem = system + '\nReturn ONLY the JSON. No prose.'
+    txt = await chatCompletion(strictSystem, userPrompt)
+    obj = safeExtractJSON(txt)
+  }
+
+  // Fallback if still no plan
+  if (!obj?.plan) {
+    const today = new Date()
+    const iso = (d: Date) => d.toISOString().slice(0,10)
+    const fallback = Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date(today)
+      d.setDate(today.getDate() + i)
+      return {
+        date: iso(d),
+        activity,
+        warmUp: ['5–10 min easy prep'],
+        mainSet: ['20–30 min steady work'],
+        coolDown: ['5–10 min easy finish'],
+        notes: 'Auto-generated fallback'
+      }
+    })
+    return clampTo14Days(fallback)
+  }
+
+  // Normalise
+  const plan = Array.isArray(obj.plan) ? obj.plan : []
+  const normalised = plan.map((it: any, idx: number) => {
+    const d = it?.date ? new Date(it.date) : new Date()
+    const iso = isNaN(+d) ? new Date() : d
+    return {
+      date: new Date(iso).toISOString().slice(0,10),
+      activity: (it?.activity as Activity) || activity,
+      warmUp: Array.isArray(it?.warmUp) ? it.warmUp : [],
+      mainSet: Array.isArray(it?.mainSet) ? it.mainSet : [],
+      coolDown: Array.isArray(it?.coolDown) ? it.coolDown : [],
+      notes: typeof it?.notes === 'string' ? it.notes : ''
+    }
+  })
+
+  return clampTo14Days(normalised)
 }
 
 export async function generateNutrition(prompt: string) {
@@ -274,6 +392,10 @@ export async function generateNutrition(prompt: string) {
   const txt = await chatCompletion(system, prompt)
   const obj = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1))
   return obj
+}
+
+export function inferActivityFromText(text: string): 'Gym' | 'Run' | 'Swim' | 'Cycle' | 'Other' {
+  return detectActivity(text)
 }
 
 export async function generateAIInsights(entryText: string, userName: string, userGoals: string) {

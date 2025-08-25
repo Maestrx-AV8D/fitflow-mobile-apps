@@ -2,15 +2,18 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons'
 import { useFocusEffect, useNavigation, useTheme } from '@react-navigation/native'
 import { LinearGradient } from 'expo-linear-gradient'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Alert,
+  Animated,
   DeviceEventEmitter,
   Dimensions,
   Modal,
+  PanResponder,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native'
@@ -35,6 +38,8 @@ export default function History() {
     other: false,
     insights: false
   })
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null)
+  const [drafts, setDrafts] = useState<Record<number, Entry>>({})
   const navigation = useNavigation()
   const { dark } = useTheme()
 
@@ -45,34 +50,95 @@ export default function History() {
   const horizontalPad = 18 // we use 18px side padding inside the card
   const pageW = screenW - horizontalPad * 2
 
+  // Moved refresh definition above all hooks that reference it
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true)
+      const data = await getEntries()
+      setEntries(data)
+      // Broadcast so Dashboard (and others) can immediately recompute weekly KPIs/graphs
+      DeviceEventEmitter.emit('fitflow:entrySaved', { reason: 'history:refresh' })
+      DeviceEventEmitter.emit('fitflow:entriesChanged', { reason: 'history:refresh' })
+      DeviceEventEmitter.emit('fitflow:dashboard:refresh', { reason: 'history:refresh' })
+    } catch (e) {
+      console.log('History.refresh error', e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Shared bottom-sheet swipe-to-dismiss state (used by all modals)
+  const sheetTranslateY = useRef(new Animated.Value(0)).current
+  const resetSheet = () => {
+    sheetTranslateY.setValue(0)
+  }
+  const springBack = () => {
+    Animated.spring(sheetTranslateY, { toValue: 0, useNativeDriver: true }).start()
+  }
+  const dismissSheet = (key: keyof typeof modalVisible) => {
+    Animated.timing(sheetTranslateY, { toValue: 400, duration: 180, useNativeDriver: true }).start(() => {
+      setModalVisible(prev => ({ ...prev, [key]: false }))
+      resetSheet()
+    })
+  }
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6 && g.dy > 0,
+      onPanResponderMove: (_, g) => {
+        if (g.dy > 0) sheetTranslateY.setValue(g.dy)
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 120 || g.vy > 0.8) {
+          // the specific modal key is handled where handlers are spread
+          // we just animate down here; close is triggered by wrapper callback
+          // no-op; we'll call dismiss in the onPanResponderRelease per-modal
+        } else {
+          springBack()
+        }
+      }
+    })
+  ).current
+
+  // We need per-modal release handlers to know which modal to close:
+  const handleReleaseFor = (key: keyof typeof modalVisible) => (_: any, g: any) => {
+    if (g.dy > 120 || g.vy > 0.8) {
+      dismissSheet(key)
+    } else {
+      springBack()
+    }
+  }
+
   useEffect(() => {
     refresh()
-  }, [])
+  }, [refresh])
 
   // Refresh on focus
   useFocusEffect(
     React.useCallback(() => {
-      refresh();
-      return undefined;
-    }, [])
-  );
+      refresh()
+      return undefined
+    }, [refresh])
+  )
 
-  // Listen for entrySaved events from other screens (e.g., Log)
+  // Listen for changes from other screens (Log, Dashboard, etc.)
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('fitflow:entrySaved', () => {
-      refresh();
-    });
+    const sub1 = DeviceEventEmitter.addListener('fitflow:entrySaved', (payload?: any) => {
+      if (payload?.reason === 'history:refresh') return // prevent self-trigger loop
+      refresh()
+    })
+    const sub2 = DeviceEventEmitter.addListener('fitflow:entriesChanged', () => {
+      refresh()
+    })
+    const sub3 = DeviceEventEmitter.addListener('fitflow:dashboard:refresh', () => {
+      // Keep History in lockstep when Dashboard forces a recompute
+      refresh()
+    })
     return () => {
-      try { sub.remove(); } catch {}
-    };
-  }, [refresh]);
-
-  async function refresh() {
-    setLoading(true)
-    const data = await getEntries()
-    setEntries(data)
-    setLoading(false)
-  }
+      try { sub1.remove() } catch {}
+      try { sub2.remove() } catch {}
+      try { sub3.remove() } catch {}
+    }
+  }, [refresh])
 
   async function handleDelete(id: number) {
     Alert.alert('Delete entry?', 'This action cannot be undone.', [
@@ -86,6 +152,10 @@ export default function History() {
             Alert.alert('Error', error.message)
           } else {
             setEntries(prev => prev.filter(e => e.id !== id))
+            // Ensure Dashboard reacts immediately
+            DeviceEventEmitter.emit('fitflow:entrySaved', { id, reason: 'history:mutation:delete' })
+            DeviceEventEmitter.emit('fitflow:entriesChanged', { id, reason: 'history:mutation:delete' })
+            DeviceEventEmitter.emit('fitflow:dashboard:refresh', { id, reason: 'history:mutation:delete' })
           }
         }
       }
@@ -93,7 +163,53 @@ export default function History() {
   }
 
   function handleEdit(entry: Entry) {
-    navigation.navigate('Log' as never, { entry } as never)
+    setExpandedEntryId(entry.id)
+    setEditingEntryId(entry.id)
+    setDrafts(prev => {
+      if (prev[entry.id]) return prev
+      // deep-ish copy to avoid mutating original
+      const copy: Entry = {
+        ...entry,
+        exercises: entry.exercises ? entry.exercises.map(e => ({ ...e })) : undefined,
+        segments: entry.segments ? entry.segments.map(s => ({ ...s })) : undefined,
+      }
+      return { ...prev, [entry.id]: copy }
+    })
+  }
+
+  function cancelEdit(id: number) {
+    setEditingEntryId(prev => (prev === id ? null : prev))
+    setDrafts(prev => {
+      const { [id]: _, ...rest } = prev
+      return rest
+    })
+  }
+
+  async function saveEdit(id: number) {
+    const draft = drafts[id]
+    if (!draft) return
+    const payload: Partial<Entry> = {
+      type: draft.type,
+      notes: draft.notes ?? '',
+      exercises: draft.type === 'Gym' ? (draft.exercises ?? []) : undefined,
+      segments: draft.type !== 'Gym' ? (draft.segments ?? []) : undefined,
+      date: draft.date,
+    }
+    const { error } = await supabase.from('entries').update(payload).eq('id', id)
+    if (error) {
+      Alert.alert('Error', error.message)
+      return
+    }
+    setEntries(prev => prev.map(e => (e.id === id ? { ...e, ...payload } as Entry : e)))
+    setEditingEntryId(null)
+    setDrafts(prev => {
+      const { [id]: _, ...rest } = prev
+      return rest
+    })
+    // Nudge Dashboard to recompute weekly KPIs/graph immediately
+    DeviceEventEmitter.emit('fitflow:entrySaved', { id, reason: 'history:mutation:edit' })
+    DeviceEventEmitter.emit('fitflow:entriesChanged', { id, reason: 'history:mutation:edit' })
+    DeviceEventEmitter.emit('fitflow:dashboard:refresh', { id, reason: 'history:mutation:edit' })
   }
 
   const gym = entries.filter(e => e.type === 'Gym')
@@ -127,6 +243,8 @@ export default function History() {
 
   const renderEntry = (entry: Entry) => {
     const isExpanded = expandedEntryId === entry.id
+    const isEditing = editingEntryId === entry.id
+    const draft = drafts[entry.id]
 
     const badgeColor =
       {
@@ -175,8 +293,16 @@ export default function History() {
 
         <View style={styles.summaryRow}>
           <View style={styles.summaryItem}>
-            <Text style={[styles.summaryLabel, { color: dark ? '#000' : '#1A1A1A', fontWeight: '600' }]}>Duration</Text>
-            <Text style={[styles.summaryValue, { color: dark ? '#000' : '#1A1A1A', fontWeight: '700' }]}>{duration}</Text>
+            <Text style={[styles.summaryLabel, { color: dark ? '#000' : '#1A1A1A', fontWeight: '600' }]}>Details</Text>
+            {entry.type === 'Gym' ? (
+              <Text style={[styles.summaryValue, { color: dark ? '#000' : '#1A1A1A', fontWeight: '700' }]}>
+                {(entry.exercises?.length ?? 0)} exercises
+              </Text>
+            ) : (
+              <Text style={[styles.summaryValue, { color: dark ? '#000' : '#1A1A1A', fontWeight: '700' }]}>
+                {entry.segments?.[0]?.distance ? `${entry.segments?.[0]?.distance}` : (entry.segments?.[0]?.laps != null ? `${entry.segments?.[0]?.laps} laps` : '—')}
+              </Text>
+            )}
           </View>
           {entry.type === 'Gym' && (
             <View style={styles.summaryItem}>
@@ -193,51 +319,213 @@ export default function History() {
         {/* Expanded Details */}
         {isExpanded && (
           <View style={styles.detailsSection}>
-            {entry.type === 'Gym' && entry.exercises?.length ? (
-              <View style={styles.section}>
-                {entry.exercises.map((ex, i) => (
-                  <View key={i} style={{ marginBottom: 6 }}>
-                    <Text style={[styles.bold, { fontSize: 16, marginBottom: 2, color: dark ? '#000' : '#1A1A1A' }]}>{ex.name}</Text>
-                    {[...Array(ex.sets).keys()].map(setIndex => (
-                      <Text key={setIndex} style={[styles.line, { color: dark ? '#000' : '#1A1A1A' }]}>
-                        Set {setIndex + 1}: {typeof ex.weight === 'number' ? `${ex.weight}kg × ` : ''}{ex.reps} reps
+            {isEditing ? (
+              <View>
+                {/* Editable form */}
+                {entry.type === 'Gym' ? (
+                  <View style={styles.section}>
+                    {(draft?.exercises ?? []).map((ex, i) => (
+                      <View key={i} style={{ marginBottom: 8 }}>
+                        <TextInput
+                          value={ex.name}
+                          onChangeText={(t) =>
+                            setDrafts(prev => {
+                              const d = { ...(prev[entry.id] as Entry) }
+                              if (!d.exercises) d.exercises = []
+                              d.exercises[i] = { ...d.exercises[i], name: t }
+                              return { ...prev, [entry.id]: d }
+                            })
+                          }
+                          placeholder="Exercise name"
+                          style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, marginBottom: 6, color: dark ? '#000' : '#1A1A1A' }}
+                          placeholderTextColor="#999"
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TextInput
+                            value={String(ex.sets ?? '')}
+                            onChangeText={(t) =>
+                              setDrafts(prev => {
+                                const d = { ...(prev[entry.id] as Entry) }
+                                if (!d.exercises) d.exercises = []
+                                const sets = Number(t) || 0
+                                d.exercises[i] = { ...d.exercises[i], sets }
+                                return { ...prev, [entry.id]: d }
+                              })
+                            }
+                            keyboardType="numeric"
+                            placeholder="Sets"
+                            style={{ flex: 1, borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, color: dark ? '#000' : '#1A1A1A' }}
+                            placeholderTextColor="#999"
+                          />
+                          <TextInput
+                            value={String(ex.reps ?? '')}
+                            onChangeText={(t) =>
+                              setDrafts(prev => {
+                                const d = { ...(prev[entry.id] as Entry) }
+                                if (!d.exercises) d.exercises = []
+                                const reps = Number(t) || 0
+                                d.exercises[i] = { ...d.exercises[i], reps }
+                                return { ...prev, [entry.id]: d }
+                              })
+                            }
+                            keyboardType="numeric"
+                            placeholder="Reps"
+                            style={{ flex: 1, borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, color: dark ? '#000' : '#1A1A1A' }}
+                            placeholderTextColor="#999"
+                          />
+                          <TextInput
+                            value={ex.weight != null ? String(ex.weight) : ''}
+                            onChangeText={(t) =>
+                              setDrafts(prev => {
+                                const d = { ...(prev[entry.id] as Entry) }
+                                if (!d.exercises) d.exercises = []
+                                const weight = t === '' ? undefined : Number(t)
+                                d.exercises[i] = { ...d.exercises[i], weight }
+                                return { ...prev, [entry.id]: d }
+                              })
+                            }
+                            keyboardType="numeric"
+                            placeholder="kg"
+                            style={{ flex: 1, borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, color: dark ? '#000' : '#1A1A1A' }}
+                            placeholderTextColor="#999"
+                          />
+                        </View>
+                      </View>
+                    ))}
+                    <TouchableOpacity
+                      onPress={() =>
+                        setDrafts(prev => {
+                          const d = { ...(prev[entry.id] as Entry) }
+                          d.exercises = [...(d.exercises ?? []), { name: '', sets: 0, reps: 0, weight: undefined }]
+                          return { ...prev, [entry.id]: d }
+                        })
+                      }
+                      style={{ marginTop: 6 }}
+                    >
+                      <Text style={{ color: '#AC6AFF', fontWeight: '700' }}>+ Add Exercise</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={styles.section}>
+                    {/* Edit first segment's distance/laps; time editable for legacy entries */}
+                    <TextInput
+                      value={draft?.segments?.[0]?.distance ?? ''}
+                      onChangeText={(t) =>
+                        setDrafts(prev => {
+                          const d = { ...(prev[entry.id] as Entry) }
+                          d.segments = d.segments?.length ? d.segments.map((s, idx) => idx === 0 ? { ...s, distance: t } : s) : [{ distance: t }]
+                          return { ...prev, [entry.id]: d }
+                        })
+                      }
+                      placeholder="Distance (e.g. 5 km)"
+                      style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, marginBottom: 8, color: dark ? '#000' : '#1A1A1A' }}
+                      placeholderTextColor="#999"
+                    />
+                    <TextInput
+                      value={draft?.segments?.[0]?.laps != null ? String(draft?.segments?.[0]?.laps) : ''}
+                      onChangeText={(t) =>
+                        setDrafts(prev => {
+                          const d = { ...(prev[entry.id] as Entry) }
+                          const laps = t === '' ? undefined : Number(t) || 0
+                          d.segments = d.segments?.length ? d.segments.map((s, idx) => idx === 0 ? { ...s, laps } : s) : [{ laps }]
+                          return { ...prev, [entry.id]: d }
+                        })
+                      }
+                      keyboardType="numeric"
+                      placeholder="Laps"
+                      style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, marginBottom: 8, color: dark ? '#000' : '#1A1A1A' }}
+                      placeholderTextColor="#999"
+                    />
+                    <TextInput
+                      value={draft?.segments?.[0]?.time ?? ''}
+                      onChangeText={(t) =>
+                        setDrafts(prev => {
+                          const d = { ...(prev[entry.id] as Entry) }
+                          d.segments = d.segments?.length ? d.segments.map((s, idx) => idx === 0 ? { ...s, time: t } : s) : [{ time: t }]
+                          return { ...prev, [entry.id]: d }
+                        })
+                      }
+                      placeholder="Time (optional)"
+                      style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, marginBottom: 8, color: dark ? '#000' : '#1A1A1A' }}
+                      placeholderTextColor="#999"
+                    />
+                  </View>
+                )}
+                {/* Notes */}
+                <TextInput
+                  value={draft?.notes ?? ''}
+                  onChangeText={(t) =>
+                    setDrafts(prev => {
+                      const d = { ...(prev[entry.id] as Entry) }
+                      d.notes = t
+                      return { ...prev, [entry.id]: d }
+                    })
+                  }
+                  placeholder="Notes"
+                  style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 8, color: dark ? '#000' : '#1A1A1A' }}
+                  placeholderTextColor="#999"
+                  multiline
+                />
+
+                {/* Save / Cancel */}
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+                  <TouchableOpacity onPress={() => cancelEdit(entry.id)} style={{ paddingVertical: 10, paddingHorizontal: 12, marginRight: 10 }}>
+                    <Text style={{ color: '#888', fontWeight: '600' }}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => saveEdit(entry.id)} style={{ paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#1A1A1A', borderRadius: 10 }}>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <>
+                {entry.type === 'Gym' && entry.exercises?.length ? (
+                  <View style={styles.section}>
+                    {entry.exercises.map((ex, i) => (
+                      <View key={i} style={{ marginBottom: 6 }}>
+                        <Text style={[styles.bold, { fontSize: 16, marginBottom: 2, color: dark ? '#000' : '#1A1A1A' }]}>{ex.name}</Text>
+                        {[...Array(ex.sets).keys()].map(setIndex => (
+                          <Text key={setIndex} style={[styles.line, { color: dark ? '#000' : '#1A1A1A' }]}>
+                            Set {setIndex + 1}: {typeof ex.weight === 'number' ? `${ex.weight}kg × ` : ''}{ex.reps} reps
+                          </Text>
+                        ))}
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+
+                {entry.type !== 'Gym' && entry.segments?.length ? (
+                  <View style={styles.section}>
+                    {entry.segments.map((seg, i) => (
+                      <Text key={i} style={[styles.line, { color: dark ? '#000' : '#1A1A1A' }]}>
+                        {seg.distance ? `${seg.distance}` : seg.laps ? `${seg.laps} laps` : ''}{seg.distance || seg.laps ? ' - ' : ''}{seg.time ?? ''}
                       </Text>
                     ))}
                   </View>
-                ))}
-              </View>
-            ) : null}
+                ) : null}
 
-            {entry.type !== 'Gym' && entry.segments?.length ? (
-              <View style={styles.section}>
-                {entry.segments.map((seg, i) => (
-                  <Text key={i} style={[styles.line, { color: dark ? '#000' : '#1A1A1A' }]}>
-                    {seg.distance ? `${seg.distance}` : seg.laps ? `${seg.laps} laps` : ''}{seg.distance || seg.laps ? ' - ' : ''}{seg.time ?? ''}
+                {entry.notes ? (
+                  <Text
+                    style={[
+                      styles.notes,
+                      entry.type === 'Fasting' && { color: '#FF6A6A', fontWeight: '600' },
+                      { color: dark ? '#000' : '#1A1A1A' }
+                    ]}
+                  >
+                    {entry.notes}
                   </Text>
-                ))}
-              </View>
-            ) : null}
+                ) : null}
 
-            {entry.notes ? (
-              <Text
-                style={[
-                  styles.notes,
-                  entry.type === 'Fasting' && { color: '#FF6A6A', fontWeight: '600' },
-                  { color: dark ? '#000' : '#1A1A1A' }
-                ]}
-              >
-                {entry.notes}
-              </Text>
-            ) : null}
-
-            <View style={styles.actions}>
-              <TouchableOpacity onPress={() => handleEdit(entry)} style={{ marginRight: 12 }}>
-                <Ionicons name="pencil-outline" size={20} color={dark ? '#ccc' : '#444'} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDelete(entry.id)}>
-                <MaterialIcons name="delete-outline" size={20} color={dark ? '#ccc' : '#444'} />
-              </TouchableOpacity>
-            </View>
+                <View style={styles.actions}>
+                  <TouchableOpacity onPress={() => handleEdit(entry)} style={{ marginRight: 12 }}>
+                    <Ionicons name="pencil-outline" size={20} color={dark ? '#ccc' : '#444'} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDelete(entry.id)}>
+                    <MaterialIcons name="delete-outline" size={20} color={dark ? '#ccc' : '#444'} />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         )}
       </TouchableOpacity>
@@ -254,8 +542,18 @@ export default function History() {
 
   return (
     <View style={[styles.screen, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9' }]}>
-      <ScrollView contentContainerStyle={styles.container}>
+      {/* Persistent Header */}
+      <View style={{
+        paddingTop: 56,
+        paddingHorizontal: 20,
+        backgroundColor: dark ? '#1A1A1A' : '#FDFCF9'
+      }}>
         <Text style={[styles.title, { color: dark ? '#fff' : '#1A1A1A' }]}>History</Text>
+      </View>
+      <ScrollView
+        contentContainerStyle={{ ...styles.container, paddingTop: 0, paddingBottom: 30 }}
+        // Remove stickyHeaderIndices, header is now outside ScrollView
+      >
         {dark ? (
           <View style={[styles.insightsCard, { backgroundColor: '#fff' }]}>
             <View>
@@ -265,7 +563,7 @@ export default function History() {
             </View>
             <TouchableOpacity
               style={[styles.insightsSeeAllButton, { borderColor: '#666' }]}
-              onPress={() => setModalVisible(prev => ({ ...prev, insights: true }))}
+              onPress={() => { resetSheet(); setModalVisible(prev => ({ ...prev, insights: true })); }}
             >
               <Text style={[styles.insightsSeeAllText, { color: '#666' }]}>See All {'>'}</Text>
             </TouchableOpacity>
@@ -284,7 +582,7 @@ export default function History() {
             </View>
             <TouchableOpacity
               style={styles.insightsSeeAllButton}
-              onPress={() => setModalVisible(prev => ({ ...prev, insights: true }))}
+              onPress={() => { resetSheet(); setModalVisible(prev => ({ ...prev, insights: true })); }}
             >
               <Text style={styles.insightsSeeAllText}>See All {'>'}</Text>
             </TouchableOpacity>
@@ -311,7 +609,7 @@ export default function History() {
                 backgroundColor: '#fff'
               }
             ]}
-            onPress={() => setModalVisible(prev => ({ ...prev, gym: true }))}
+            onPress={() => { resetSheet(); setModalVisible(prev => ({ ...prev, gym: true })); }}
             activeOpacity={0.85}
           >
             <View style={{ alignItems: 'center', flex: 1, justifyContent: 'center' }}>
@@ -327,10 +625,19 @@ export default function History() {
             visible={modalVisible.gym}
             animationType="slide"
             transparent={true}
-            onRequestClose={() => setModalVisible(prev => ({ ...prev, gym: false }))}
+            onRequestClose={() => dismissSheet('gym')}
+            onShow={resetSheet}
           >
             <View style={[styles.modalOverlay, { backgroundColor: dark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)' }]}>
-              <View style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1 }]}>
+              <Animated.View
+                style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1, transform: [{ translateY: sheetTranslateY }] }]}
+                {...{
+                  ...panResponder.panHandlers,
+                  onStartShouldSetResponder: () => false,
+                  onMoveShouldSetResponder: () => false,
+                  onResponderRelease: handleReleaseFor('gym')
+                }}
+              >
                 <View style={styles.modalHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons
@@ -341,7 +648,7 @@ export default function History() {
                     />
                     <Text style={[styles.modalTitle, { color: dark ? '#fff' : '#1A1A1A' }]}>Gym Workouts</Text>
                   </View>
-                  <TouchableOpacity onPress={() => setModalVisible(prev => ({ ...prev, gym: false }))} style={styles.modalCloseButton}>
+                  <TouchableOpacity onPress={() => dismissSheet('gym')} style={styles.modalCloseButton}>
                     <Ionicons name="close" size={28} color={dark ? '#fff' : '#1A1A1A'} />
                   </TouchableOpacity>
                 </View>
@@ -352,7 +659,7 @@ export default function History() {
                 >
                   {gym.length ? gym.map(renderEntry) : <Text style={[styles.empty, { color: dark ? '#EEE' : '#999' }]}>No gym workouts logged.</Text>}
                 </ScrollView>
-              </View>
+              </Animated.View>
             </View>
           </Modal>
         </View>
@@ -377,7 +684,7 @@ export default function History() {
                 backgroundColor: '#fff'
               }
             ]}
-            onPress={() => setModalVisible(prev => ({ ...prev, fasting: true }))}
+            onPress={() => { resetSheet(); setModalVisible(prev => ({ ...prev, fasting: true })); }}
             activeOpacity={0.85}
           >
             <View style={{ alignItems: 'center', flex: 1, justifyContent: 'center' }}>
@@ -393,10 +700,19 @@ export default function History() {
             visible={modalVisible.fasting}
             animationType="slide"
             transparent={true}
-            onRequestClose={() => setModalVisible(prev => ({ ...prev, fasting: false }))}
+            onRequestClose={() => dismissSheet('fasting')}
+            onShow={resetSheet}
           >
             <View style={[styles.modalOverlay, { backgroundColor: dark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)' }]}>
-              <View style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1 }]}>
+              <Animated.View
+                style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1, transform: [{ translateY: sheetTranslateY }] }]}
+                {...{
+                  ...panResponder.panHandlers,
+                  onStartShouldSetResponder: () => false,
+                  onMoveShouldSetResponder: () => false,
+                  onResponderRelease: handleReleaseFor('fasting')
+                }}
+              >
                 <View style={styles.modalHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons
@@ -407,7 +723,7 @@ export default function History() {
                     />
                     <Text style={[styles.modalTitle, { color: dark ? '#fff' : '#1A1A1A' }]}>Fasting Logs</Text>
                   </View>
-                  <TouchableOpacity onPress={() => setModalVisible(prev => ({ ...prev, fasting: false }))} style={styles.modalCloseButton}>
+                  <TouchableOpacity onPress={() => dismissSheet('fasting')} style={styles.modalCloseButton}>
                     <Ionicons name="close" size={28} color={dark ? '#fff' : '#1A1A1A'} />
                   </TouchableOpacity>
                 </View>
@@ -418,7 +734,7 @@ export default function History() {
                 >
                   {fasts.length ? fasts.map(renderEntry) : <Text style={[styles.empty, { color: dark ? '#EEE' : '#999' }]}>No fasting logs yet.</Text>}
                 </ScrollView>
-              </View>
+              </Animated.View>
             </View>
           </Modal>
         </View>
@@ -443,7 +759,7 @@ export default function History() {
                 backgroundColor: '#fff'
               }
             ]}
-            onPress={() => setModalVisible(prev => ({ ...prev, other: true }))}
+            onPress={() => { resetSheet(); setModalVisible(prev => ({ ...prev, other: true })); }}
             activeOpacity={0.85}
           >
             <View style={{ alignItems: 'center', flex: 1, justifyContent: 'center' }}>
@@ -459,10 +775,19 @@ export default function History() {
             visible={modalVisible.other}
             animationType="slide"
             transparent={true}
-            onRequestClose={() => setModalVisible(prev => ({ ...prev, other: false }))}
+            onRequestClose={() => dismissSheet('other')}
+            onShow={resetSheet}
           >
             <View style={[styles.modalOverlay, { backgroundColor: dark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)' }]}>
-              <View style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1 }]}>
+              <Animated.View
+                style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', flex: 1, transform: [{ translateY: sheetTranslateY }] }]}
+                {...{
+                  ...panResponder.panHandlers,
+                  onStartShouldSetResponder: () => false,
+                  onMoveShouldSetResponder: () => false,
+                  onResponderRelease: handleReleaseFor('other')
+                }}
+              >
                 <View style={styles.modalHeader}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons
@@ -473,7 +798,7 @@ export default function History() {
                     />
                     <Text style={[styles.modalTitle, { color: dark ? '#fff' : '#1A1A1A' }]}>Other Activities</Text>
                   </View>
-                  <TouchableOpacity onPress={() => setModalVisible(prev => ({ ...prev, other: false }))} style={styles.modalCloseButton}>
+                  <TouchableOpacity onPress={() => dismissSheet('other')} style={styles.modalCloseButton}>
                     <Ionicons name="close" size={28} color={dark ? '#fff' : '#1A1A1A'} />
                   </TouchableOpacity>
                 </View>
@@ -484,7 +809,7 @@ export default function History() {
                 >
                   {other.length ? other.map(renderEntry) : <Text style={[styles.empty, { color: dark ? '#EEE' : '#999' }]}>No other activities logged.</Text>}
                 </ScrollView>
-              </View>
+              </Animated.View>
             </View>
           </Modal>
         </View>
@@ -494,13 +819,22 @@ export default function History() {
           visible={modalVisible.insights}
           animationType="slide"
           transparent={true}
-          onRequestClose={() => setModalVisible(prev => ({ ...prev, insights: false }))}
+          onRequestClose={() => dismissSheet('insights')}
+          onShow={resetSheet}
         >
           <View style={[styles.modalOverlay, { backgroundColor: dark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.3)' }]}>
-            <View style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', maxHeight: '85%' }]}>
+            <Animated.View
+              style={[styles.modalContent, { backgroundColor: dark ? '#1A1A1A' : '#FDFCF9', maxHeight: '85%', transform: [{ translateY: sheetTranslateY }] }]}
+              {...{
+                ...panResponder.panHandlers,
+                onStartShouldSetResponder: () => false,
+                onMoveShouldSetResponder: () => false,
+                onResponderRelease: handleReleaseFor('insights')
+              }}
+            >
               <View style={styles.modalHeader}>
                 <Text style={[styles.modalTitle, { color: dark ? '#fff' : '#1A1A1A' }]}>{thisMonth} Insights</Text>
-                <TouchableOpacity onPress={() => setModalVisible(prev => ({ ...prev, insights: false }))} style={styles.modalCloseButton}>
+                <TouchableOpacity onPress={() => dismissSheet('insights')} style={styles.modalCloseButton}>
                   <Ionicons name="close" size={28} color={dark ? '#fff' : '#1A1A1A'} />
                 </TouchableOpacity>
               </View>
@@ -608,7 +942,7 @@ export default function History() {
                   </Text>
                 </View>
 
-                {/* NEW — Month Pager (Mon–Sun per page, swipeable) */}
+                {/* Month Pager (Mon–Sun per page, swipeable) */}
                 {(() => {
                   const today = new Date()
                   const year = today.getFullYear()
@@ -622,7 +956,7 @@ export default function History() {
                   const firstOfMonth = new Date(year, month, 1)
                   const lastOfMonth = new Date(year, month + 1, 0)
 
-                  // we want Monday-start weeks covering the full month
+                  // Monday-start weeks covering the full month
                   const firstWeekStart = (() => {
                     const d = new Date(firstOfMonth)
                     const dow = d.getDay() // 0 Sun,1 Mon,...6 Sat
@@ -941,7 +1275,7 @@ export default function History() {
                   )
                 })()}
               </ScrollView>
-            </View>
+            </Animated.View>
           </View>
         </Modal>
 
@@ -964,6 +1298,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center'
   },
+  stickyHeader: {
+    paddingTop: 0,
+    paddingBottom: 8,
+    zIndex: 10
+  },
   title: {
     fontSize: 30,
     fontWeight: '700',
@@ -981,7 +1320,7 @@ const styles = StyleSheet.create({
   insightsCard: {
     borderRadius: 28,
     paddingHorizontal: 24,
-    paddingVertical: 40,
+    paddingVertical: 56,
     marginBottom: 32,
     flexDirection: 'row',
     justifyContent: 'space-between',
