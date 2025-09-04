@@ -52,7 +52,7 @@ export default function Onboarding() {
   const skipToDashboard = async () => {
     await AsyncStorage.setItem('hasOnboarded', 'true');
     setHasOnboarded(true);
-    navigation.replace('Signin');
+    navigation.replace('SignIn');
   };
 
   const canNext = () => {

@@ -28,14 +28,38 @@ type FastingSegment = {
   completed?: boolean;
 };
 
+// New Gym schema (from Log save)
+type GymSet = {
+  reps: number | null;
+  weight: number | null;
+  completed: boolean;
+};
+type GymExerciseNew = { section?: string; name: string; setsArr: GymSet[] };
+
+// Legacy Gym schema (still supported for older rows)
+type GymExerciseOld = {
+  name: string;
+  sets: number;
+  reps: number;
+  weight?: number;
+};
+
 type Entry = {
   id: number;
   date: string;
   type: string;
-  exercises?: { name: string; sets: number; reps: number; weight?: number }[];
+  exercises?: (GymExerciseNew | GymExerciseOld)[];
   segments?: (DistanceSegment | FastingSegment)[];
   notes?: string;
 };
+
+const isNewGym = (e: any): e is GymExerciseNew => Array.isArray(e?.setsArr);
+
+const prettyKv = (k: string) =>
+  k
+    .replace(/([A-Z])/g, " $1")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase()); // "hrAvg" -> "Hr Avg"
 
 export default function History() {
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -374,17 +398,103 @@ export default function History() {
     (entry) => new Date(entry.date).getMonth() === new Date().getMonth()
   );
 
-  const calculateVolume = (
-    exercises?: { sets: number; reps: number; weight?: number }[]
-  ) => {
-    if (!exercises) return 0;
-    return exercises.reduce((sum, ex) => {
-      const repsTotal = ex.sets * ex.reps;
-      return (
-        sum +
-        (typeof ex.weight === "number" ? repsTotal * ex.weight : repsTotal)
-      );
-    }, 0);
+  // const calculateVolume = (
+  //   exercises?: { sets: number; reps: number; weight?: number }[]
+  // ) => {
+  //   if (!exercises) return 0;
+  //   return exercises.reduce((sum, ex) => {
+  //     const repsTotal = ex.sets * ex.reps;
+  //     return (
+  //       sum +
+  //       (typeof ex.weight === "number" ? repsTotal * ex.weight : repsTotal)
+  //     );
+  //   }, 0);
+  // };
+
+  const calculateVolume = (exs?: (GymExerciseNew | GymExerciseOld)[]) => {
+    if (!exs) return 0;
+    let total = 0;
+    for (const ex of exs) {
+      if (isNewGym(ex)) {
+        for (const s of ex.setsArr) {
+          const reps = typeof s.reps === "number" ? s.reps : 0;
+          const w = typeof s.weight === "number" ? s.weight : 0;
+          total += w > 0 ? w * reps : reps;
+        }
+      } else {
+        const repsTotal = (ex.sets || 0) * (ex.reps || 0);
+        total +=
+          typeof ex.weight === "number" ? ex.weight * repsTotal : repsTotal;
+      }
+    }
+    return total;
+  };
+
+  // Best (max) weight observed per exercise name across ALL entries
+  const bestWeightByExercise = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of entries) {
+      if (e.type !== "Gym") continue;
+      for (const ex of e.exercises ?? []) {
+        if (isNewGym(ex)) {
+          for (const s of ex.setsArr) {
+            if (typeof s.weight === "number")
+              map.set(
+                ex.name,
+                Math.max(map.get(ex.name) ?? -Infinity, s.weight)
+              );
+          }
+        } else if (typeof ex.weight === "number") {
+          map.set(ex.name, Math.max(map.get(ex.name) ?? -Infinity, ex.weight));
+        }
+      }
+    }
+    return map;
+  }, [entries]);
+
+  // Count PR sets in a given entry
+  const countPRs = (entry: Entry) => {
+    let count = 0;
+    for (const ex of entry.exercises ?? []) {
+      const name = ex.name;
+      const maxW = bestWeightByExercise.get(name);
+      if (maxW == null) continue;
+      if (isNewGym(ex)) {
+        count += ex.setsArr.filter((s) => s.weight === maxW).length;
+      } else if (ex.weight === maxW) {
+        count += Math.max(1, ex.sets || 1); // legacy: treat whole block as PR
+      }
+    }
+    return count;
+  };
+
+  const groupBySection = (exs?: (GymExerciseNew | GymExerciseOld)[]) => {
+    const buckets: Record<string, GymExerciseNew[]> = {
+      "Warm-Up": [],
+      "Main Set": [],
+      "Cool-Down": [],
+      Other: [],
+    };
+    for (const ex of exs ?? []) {
+      if (isNewGym(ex)) {
+        const sec = ex.section || "Main Set";
+        const key = ["Warm-Up", "Main Set", "Cool-Down"].includes(sec)
+          ? sec
+          : "Other";
+        buckets[key].push(ex);
+      } else {
+        // adapt legacy to new shape in "Main Set"
+        const setsArr: GymSet[] = Array.from({ length: ex.sets || 0 }).map(
+          () => ({
+            reps: typeof ex.reps === "number" ? ex.reps : null,
+            weight: typeof ex.weight === "number" ? ex.weight : null,
+            completed: false,
+          })
+        );
+        buckets["Main Set"].push({ name: ex.name, setsArr });
+      }
+    }
+    return buckets;
   };
 
   const renderEntry = (entry: Entry) => {
@@ -398,16 +508,45 @@ export default function History() {
         Run: "#43E97B",
         Swim: "#5DA5FF",
         Cycle: "#FFC300",
+        Yoga: "#239cbdff",
+        Football: "#FF5733",
         Fasting: "#FF6A6A",
+        Walk: "#057710ff",
+        Hike: "#8B4513",
+        Row: "#00CED1",
       }[entry.type] ?? "#AAA";
 
-    const prCount = 0;
+    const prCount = countPRs(entry);
     const volume =
       entry.type === "Gym" ? calculateVolume(entry.exercises) : null;
     const fastingInfo = entry.type === "Fasting" ? getFastingInfo(entry) : null;
 
     const toggleExpand = () =>
       setExpandedEntryId((prev) => (prev === entry.id ? null : entry.id));
+
+    // inside renderEntry(), before the return, add:
+    const seg0: any = (entry.segments?.[0] as any) || {};
+    const hasDistance = seg0.distance != null || seg0.laps != null;
+    const hasDuration =
+      seg0.duration != null || seg0.time != null || seg0.minutes != null;
+
+    const summaryLabel =
+      entry.type === "Gym"
+        ? "Details"
+        : hasDistance
+        ? "Distance"
+        : hasDuration
+        ? "Duration"
+        : "Details";
+
+    const summaryValue =
+      entry.type === "Gym"
+        ? `${entry.exercises?.length ?? 0} exercises`
+        : hasDistance
+        ? seg0.distance ?? `${seg0.laps} laps`
+        : hasDuration
+        ? seg0.duration ?? seg0.time ?? `${seg0.minutes} min`
+        : "—";
 
     return (
       <TouchableOpacity
@@ -451,6 +590,13 @@ export default function History() {
               ) : entry.type === "Cycle" ? (
                 <MaterialIcons
                   name="directions-bike"
+                  size={14}
+                  color="#fff"
+                  style={{ marginRight: 4 }}
+                />
+              ) : entry.type === "Football" ? (
+                <MaterialIcons
+                  name="sports-soccer"
                   size={14}
                   color="#fff"
                   style={{ marginRight: 4 }}
@@ -534,7 +680,7 @@ export default function History() {
                   { color: dark ? "#000" : "#1A1A1A", fontWeight: "600" },
                 ]}
               >
-                Details
+                {summaryLabel}
               </Text>
               {entry.type === "Gym" ? (
                 <Text
@@ -552,56 +698,51 @@ export default function History() {
                     { color: dark ? "#000" : "#1A1A1A", fontWeight: "700" },
                   ]}
                 >
-                  {(entry.segments?.[0] as DistanceSegment | undefined)
-                    ?.distance
-                    ? `${(entry.segments?.[0] as DistanceSegment).distance}`
-                    : (entry.segments?.[0] as DistanceSegment | undefined)
-                        ?.laps != null
-                    ? `${(entry.segments?.[0] as DistanceSegment).laps} laps`
-                    : "—"}
+                  {summaryValue}
                 </Text>
               )}
             </View>
 
             {entry.type === "Gym" && (
-              <View style={styles.summaryItem}>
-                <Text
-                  style={[
-                    styles.summaryLabel,
-                    { color: dark ? "#000" : "#1A1A1A", fontWeight: "600" },
-                  ]}
-                >
-                  Volume
-                </Text>
-                <Text
-                  style={[
-                    styles.summaryValue,
-                    { color: dark ? "#000" : "#1A1A1A", fontWeight: "700" },
-                  ]}
-                >
-                  {volume}
-                </Text>
-              </View>
+              <>
+                <View style={styles.summaryItem}>
+                  <Text
+                    style={[
+                      styles.summaryLabel,
+                      { color: dark ? "#000" : "#1A1A1A", fontWeight: "600" },
+                    ]}
+                  >
+                    Volume
+                  </Text>
+                  <Text
+                    style={[
+                      styles.summaryValue,
+                      { color: dark ? "#000" : "#1A1A1A", fontWeight: "700" },
+                    ]}
+                  >
+                    {volume}
+                  </Text>
+                </View>
+                <View style={styles.summaryItem}>
+                  <Text
+                    style={[
+                      styles.summaryLabel,
+                      { color: dark ? "#000" : "#1A1A1A", fontWeight: "600" },
+                    ]}
+                  >
+                    PRs
+                  </Text>
+                  <Text
+                    style={[
+                      styles.summaryValue,
+                      { color: dark ? "#000" : "#1A1A1A", fontWeight: "700" },
+                    ]}
+                  >
+                    {prCount}
+                  </Text>
+                </View>
+              </>
             )}
-
-            <View style={styles.summaryItem}>
-              <Text
-                style={[
-                  styles.summaryLabel,
-                  { color: dark ? "#000" : "#1A1A1A", fontWeight: "600" },
-                ]}
-              >
-                PRs
-              </Text>
-              <Text
-                style={[
-                  styles.summaryValue,
-                  { color: dark ? "#000" : "#1A1A1A", fontWeight: "700" },
-                ]}
-              >
-                {prCount}
-              </Text>
-            </View>
           </View>
         )}
 
@@ -841,37 +982,62 @@ export default function History() {
               <>
                 {entry.type === "Gym" && entry.exercises?.length ? (
                   <View style={styles.section}>
-                    {entry.exercises.map((ex, i) => (
-                      <View key={i} style={{ marginBottom: 6 }}>
-                        <Text
-                          style={[
-                            styles.bold,
-                            {
-                              fontSize: 16,
-                              marginBottom: 2,
-                              color: dark ? "#000" : "#1A1A1A",
-                            },
-                          ]}
-                        >
-                          {ex.name}
-                        </Text>
-                        {[...Array(ex.sets).keys()].map((setIndex) => (
-                          <Text
-                            key={setIndex}
-                            style={[
-                              styles.line,
-                              { color: dark ? "#000" : "#1A1A1A" },
-                            ]}
-                          >
-                            Set {setIndex + 1}:{" "}
-                            {typeof ex.weight === "number"
-                              ? `${ex.weight}kg × `
-                              : ""}
-                            {ex.reps} reps
-                          </Text>
-                        ))}
-                      </View>
-                    ))}
+                    {(() => {
+                      const grouped = groupBySection(entry.exercises);
+                      const order = [
+                        "Warm-Up",
+                        "Main Set",
+                        "Cool-Down",
+                        "Other",
+                      ] as const;
+
+                      return order.map((sec) => {
+                        const list = grouped[sec];
+                        if (!list?.length) return null;
+
+                        return (
+                          <View key={sec} style={{ marginBottom: 10 }}>
+                            <Text
+                              style={[
+                                styles.bold,
+                                {
+                                  fontSize: 16,
+                                  marginBottom: 4,
+                                  paddingBottom: 2,
+                                  color: dark ? "#4b6dddff" : "#45af33ff",
+                                },
+                              ]}
+                            >
+                              {sec}
+                            </Text>
+                            {list.map((ex, i) => (
+                              <View
+                                key={`${sec}-${i}`}
+                                style={{ marginBottom: 6 }}
+                              >
+                                <Text style={[styles.bold]}>
+                                  {ex.name || "—"}
+                                </Text>
+                                {ex.setsArr?.length ? (
+                                  ex.setsArr.map((s, j) => (
+                                    <Text key={j} style={styles.line}>
+                                      Set {j + 1}:{" "}
+                                      {typeof s.weight === "number"
+                                        ? `${s.weight}kg × `
+                                        : ""}
+                                      {s.reps ?? "—"} reps
+                                      {s.completed ? "  ✓" : ""}
+                                    </Text>
+                                  ))
+                                ) : (
+                                  <Text style={styles.line}>No sets</Text>
+                                )}
+                              </View>
+                            ))}
+                          </View>
+                        );
+                      });
+                    })()}
                   </View>
                 ) : null}
 
@@ -961,23 +1127,70 @@ export default function History() {
                 entry.type !== "Fasting" &&
                 entry.segments?.length ? (
                   <View style={styles.section}>
-                    {(entry.segments as DistanceSegment[]).map((seg, i) => (
-                      <Text
-                        key={i}
-                        style={[
-                          styles.line,
-                          { color: dark ? "#000" : "#1A1A1A" },
-                        ]}
-                      >
-                        {seg.distance
-                          ? `${seg.distance}`
-                          : seg.laps
-                          ? `${seg.laps} laps`
-                          : ""}
-                        {seg.distance || seg.laps ? " - " : ""}
-                        {seg.time ?? ""}
-                      </Text>
-                    ))}
+                    {(entry.segments as any[]).map((seg, i) => {
+                      // preferred ordering for common fields; anything else falls through alphabetically
+                      const preferred = [
+                        "distance",
+                        "laps",
+                        "duration",
+                        "time",
+                        "minutes",
+                        "pace",
+                        "avgSpeed",
+                        "elevationGain",
+                        "steps",
+                        "surface",
+                        "hrAvg",
+                        "calories",
+                        "bikeType",
+                        "poolLength",
+                        "stroke",
+                        "terrain",
+                        "route",
+                        "spm",
+                        "split500",
+                        "level",
+                        "intervals",
+                        "style",
+                        "focus",
+                        "difficulty",
+                        "work",
+                        "rest",
+                        "rounds",
+                        "movements",
+                        "context",
+                        "stats",
+                      ];
+
+                      const keys = Object.keys(seg || {}).filter(
+                        (k) => seg[k] != null && seg[k] !== ""
+                      );
+                      const ordered = [
+                        ...preferred.filter((k) => keys.includes(k)),
+                        ...keys.filter((k) => !preferred.includes(k)).sort(),
+                      ];
+
+                      if (!ordered.length) return null;
+
+                      return (
+                        <View key={i} style={{ marginBottom: 8 }}>
+                          {ordered.map((k) => (
+                            <Text
+                              key={k}
+                              style={[
+                                styles.line,
+                                { color: dark ? "#000" : "#1A1A1A" },
+                              ]}
+                            >
+                              <Text style={{ fontWeight: "700" }}>
+                                {prettyKv(k)}:{" "}
+                              </Text>
+                              {String(seg[k])}
+                            </Text>
+                          ))}
+                        </View>
+                      );
+                    })}
                   </View>
                 ) : null}
 

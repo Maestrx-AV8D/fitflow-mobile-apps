@@ -694,7 +694,7 @@ export default function Profile() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    navigation.replace("Signin");
+    navigation.replace("SignIn");
   };
 
   const openLink = (url: string) => {

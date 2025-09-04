@@ -1,4 +1,9 @@
-import { CompositeNavigationProp, useNavigation, useRoute } from '@react-navigation/native';
+import {
+  CommonActions,
+  CompositeNavigationProp,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
 import {
   add,
   addDays,
@@ -42,6 +47,8 @@ type FavTemplate = {
   coolDown?: string[];
   time?: string;
   distance?: string;
+  laps?: string;
+  poolLength?: string;
   createdAt: string;
 };
 
@@ -52,7 +59,7 @@ type ImportedScheduleParam = {
   warmUp?: string[];
   mainSet?: string[];
   coolDown?: string[];
-  type?: 'Gym' | 'Run' | 'Swim' | 'Cycle' | 'Other';
+  type?: "Gym" | "Run" | "Swim" | "Cycle" | "Other";
   time?: string;
   distance?: string;
 }[];
@@ -68,6 +75,9 @@ type ScheduleNav = CompositeNavigationProp<
   BottomTabNavigationProp<RootTabParamList, "Schedule">,
   NativeStackNavigationProp<MainStackParamList>
 >;
+
+type SetRow = { reps: string; weight: string; completed?: boolean };
+type GymEx = { name: string; setsArr: SetRow[] };
 
 export default function Schedule() {
   const navigation = useNavigation<any>();
@@ -89,6 +99,30 @@ export default function Schedule() {
   const [duration, setDuration] = useState("");
   const [distance, setDistance] = useState("");
   const { colors, spacing, typography } = useTheme();
+  const [customType, setCustomType] = useState("");
+  // under the other useState lines
+  const [laps, setLaps] = useState("");
+  const [poolLength, setPoolLength] = useState("");
+
+  const emptySet: SetRow = { reps: "", weight: "", completed: false };
+  const emptyEx: GymEx = { name: "", setsArr: [{ ...emptySet }] };
+
+  // stable id + key helpers
+  const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const withId = (x: any) => (x && x.id ? x : { ...x, id: newId() });
+  const stableKey = (it: any, idx: number) =>
+    it?.id ?? `${it?.date ?? "na"}-${it?.type ?? "na"}-${idx}`;
+
+  const [gymSections, setGymSections] = useState<{
+    warmUp: GymEx[];
+    mainSet: GymEx[];
+    coolDown: GymEx[];
+  }>({
+    warmUp: [{ ...emptyEx }],
+    mainSet: [{ ...emptyEx }],
+    coolDown: [{ ...emptyEx }],
+  });
+  const [wasPrefilled, setWasPrefilled] = useState(false);
 
   // Favourites sheet
   const [showFavSheet, setShowFavSheet] = useState(false);
@@ -101,6 +135,61 @@ export default function Schedule() {
   const listTopOffset = Math.max(0, headerHeight + EXTRA_GAP);
 
   const WIN_H = Dimensions.get("window").height;
+
+  useEffect(() => {
+    (async () => {
+      const stored = await getSchedule(); // your existing loader
+      const migrated = (stored ?? []).map(withId);
+      setPlan(migrated);
+      if ((stored ?? []).some((x: any) => !x?.id)) {
+        await saveSchedule(migrated); // persist migration once
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const p = (route as any)?.params?.importToLog;
+    if (!p) return;
+
+    setType(p.type || "Gym");
+    setNotes(p.notes || "");
+
+    if ((p.type || "Gym") === "Gym") {
+      const norm = (arr: any[] = []): GymEx[] =>
+        arr.map((e) => ({
+          name: e.name || "",
+          setsArr:
+            e.setsArr ??
+            (e.sets?.map?.((s: any) => ({
+              reps: s.reps || "",
+              weight: s.weight || "",
+              completed: !!s.completed,
+            })) || [{ ...emptySet }]),
+        }));
+
+      if (p.sections) {
+        setGymSections({
+          warmUp: norm(p.sections.warmUp),
+          mainSet: norm(p.sections.mainSet),
+          coolDown: norm(p.sections.coolDown),
+        });
+      } else if (p.exercises) {
+        // Back-compat: treat a plain exercises[] as Main Set
+        setGymSections({
+          warmUp: [],
+          mainSet: norm(p.exercises),
+          coolDown: [],
+        });
+      }
+    } else {
+      // Non-gym
+      setSeg(p.segments || {});
+    }
+
+    setWasPrefilled(true);
+    setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(route as any)?.params?._ts]);
 
   useEffect(() => {
     (async () => {
@@ -118,22 +207,16 @@ export default function Schedule() {
     await AsyncStorage.setItem(FAV_KEY, JSON.stringify(next));
   };
 
-  useEffect(() => {
-    (async () => {
-      const stored = await getSchedule();
-      setPlan(stored);
-    })();
-  }, []);
-
   // Import schedule passed in from SmartWorkout ("Import All to Schedule")
   useEffect(() => {
-    const imported: ImportedScheduleParam | undefined = (route as any)?.params?.importedSchedule;
+    const imported: ImportedScheduleParam | undefined = (route as any)?.params
+      ?.importedSchedule;
     if (!imported || !Array.isArray(imported) || imported.length === 0) return;
 
     // Map incoming days to our local plan shape
     const mapped = imported.map((d) => ({
-      date: d.date,                 // expected yyyy-MM-dd
-      type: d.type || 'Gym',
+      date: d.date, // expected yyyy-MM-dd
+      type: d.type || "Gym",
       done: false,
       frozen: false,
       warmUp: (d.warmUp || []).slice(0),
@@ -141,12 +224,14 @@ export default function Schedule() {
       coolDown: (d.coolDown || []).slice(0),
       time: d.time,
       distance: d.distance,
+      laps: (d as any).laps,
+      poolLength: (d as any).poolLength,
     }));
 
     // Replace duplicates by (date + type), keep last occurrence
     const byKey = new Map<string, any>();
     [...plan, ...mapped].forEach((item) => {
-      const key = `${item.date}::${item.type}`;
+      const key = `${item.date}::${item.customType || item.type}`;
       byKey.set(key, item);
     });
     const merged = Array.from(byKey.values()).sort(
@@ -156,7 +241,12 @@ export default function Schedule() {
     (async () => {
       await persist(merged);
       try {
-        Alert.alert('Imported', `Added ${mapped.length} day${mapped.length === 1 ? '' : 's'} to your schedule.`);
+        Alert.alert(
+          "Imported",
+          `Added ${mapped.length} day${
+            mapped.length === 1 ? "" : "s"
+          } to your schedule.`
+        );
       } catch {}
     })();
 
@@ -181,66 +271,83 @@ export default function Schedule() {
     (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()
   );
 
-  async function completeDay(idx: number) {
-    if (plan[idx]?.frozen) return;
-    const updated = plan.map((d, i) => (i === idx ? { ...d, done: true } : d));
-    persist(updated);
+  async function completeDay(index: number) {
+    const item = plan[index];
+    if (!item || item.frozen) return;
 
-    const completedItem = updated[idx];
+    // mark done
+    const next = plan.map((d, i) => (i === index ? { ...d, done: true } : d));
+    await persist(next);
+
+    // build a history entry from the updated item
+    const completed = next[index];
     const historyEntry: any = {
-      date: completedItem.date,
-      type: completedItem.type,
+      date: completed.date,
+      type: completed.type,
       notes: "",
       exercises: [],
       segments: [],
     };
-    if (completedItem.type === "Gym") {
-      historyEntry.exercises = (completedItem.mainSet || []).map(
-        (s: string) => {
-          const [name, rest = ""] = s.split(":");
-          const sets = rest.match(/(\d+)×/)?.[1] || "";
-          const reps = rest.match(/×(\d+)/)?.[1] || "";
-          return { name: name.trim(), sets, reps, weight: "" };
-        }
-      );
+
+    if (completed.type === "Gym") {
+      // parse "Name: 3×10" → { name, sets, reps }
+      const parse = (s: string) => {
+        const [name, rest = ""] = s.split(":");
+        const sets = rest.match(/(\d+)×/)?.[1] || "";
+        const reps = rest.match(/×(\d+)/)?.[1] || "";
+        return { name: name.trim(), sets, reps, weight: "" };
+      };
+      historyEntry.exercises = [
+        ...(completed.warmUp || []).map(parse),
+        ...(completed.mainSet || []).map(parse),
+        ...(completed.coolDown || []).map(parse),
+      ];
+    } else if (completed.type === "Swim") {
+      historyEntry.segments = [
+        {
+          type: "Swim",
+          time: completed.time || "",
+          laps: completed.laps || "",
+          poolLength: completed.poolLength || "",
+        },
+      ];
     } else {
       historyEntry.segments = [
         {
-          type: completedItem.type,
-          time: completedItem.time || "",
-          distance: completedItem.distance || "",
+          type: completed.type,
+          time: completed.time || "",
+          distance: completed.distance || "",
         },
       ];
     }
+
     try {
       if (typeof saveToHistory === "function") {
         await saveToHistory(historyEntry);
-      } else {
-        console.log("History entry:", historyEntry);
       }
-    } catch (error) {
-      console.log("Failed to save to history:", error);
+    } catch (err) {
+      console.log("Failed to save to history:", err);
     }
   }
 
-  function toggleFreeze(idx: number) {
-    const updated = plan.map((d, i) =>
-      i === idx ? { ...d, frozen: !d.frozen } : d
+  function toggleFreeze(index: number) {
+    const next = plan.map((d, i) =>
+      i === index ? { ...d, frozen: !d.frozen } : d
     );
-    persist(updated);
+    persist(next);
   }
 
-  function removeDay(idx: number) {
-    const updated = plan.filter((_, i) => i !== idx);
-    persist(updated);
+  function removeDay(index: number) {
+    const next = plan.filter((_, i) => i !== index);
+    persist(next);
   }
 
   function goToLog(entry?: any) {
-  navigation.navigate("Home", {
-    screen: "Log",
-    params: { entry },
-  });
-}
+    navigation.navigate("Home", {
+      screen: "Log",
+      params: { entry },
+    });
+  }
 
   // Robust navigation to Log
   function safeNavigateToLog(entry: any) {
@@ -278,36 +385,100 @@ export default function Schedule() {
     }
   }
 
-  function importToLog(day: any, exercise?: string) {
-    const entry: any = {
-      date: day.date,
-      type: day.type || "Gym",
-      notes: exercise || day.mainSet?.join(", "),
-      exercises: [],
-      segments: [],
-    };
-    if (exercise) {
-      const [name, rest = ""] = exercise.split(":");
-      const sets = rest.match(/(\d+)×/)?.[1] || "";
-      const reps = rest.match(/×(\d+)/)?.[1] || "";
-      entry.exercises = [{ name: name.trim(), sets, reps, weight: "" }];
-    } else if (day.type === "Gym") {
-      entry.exercises = (day.mainSet || []).map((s: string) => {
-        const [name, rest = ""] = s.split(":");
-        const sets = rest.match(/(\d+)×/)?.[1] || "";
-        const reps = rest.match(/×(\d+)/)?.[1] || "";
-        return { name: name.trim(), sets, reps, weight: "" };
-      });
-    } else {
-      entry.segments = [
-        {
-          type: day.type,
-          time: day.time || "",
-          distance: day.distance || "",
+  function toExercises(list: string[] = []) {
+    return list.map((s) => {
+      const [name, rest = ""] = s.split(":");
+      const reps = rest.match(/×(\d+)/)?.[1] || ""; // 3×10  -> "10"
+      return { name: (name || "").trim(), sets: [{ reps, weight: "" }] };
+    });
+  }
+
+  // Robustly navigate to the "Log" screen anywhere in ancestor navs
+  function navigateToLog(params: any) {
+    // If your tabs container is named "MainTabs", use that:
+    navigation.dispatch(
+      CommonActions.navigate({
+        name: "Home", // <-- your tab navigator route name
+        params: {
+          screen: "Log", // <-- the tab/screen inside MainTabs
+          params, //     { importToLog: ..., _ts: ... }
         },
+      })
+    );
+  }
+
+  // Map free-text to a Log type when user picked "Other" with a custom label.
+  function guessLogType(input?: string) {
+    const s = (input || "").trim().toLowerCase();
+    const is = (...xs: string[]) => xs.includes(s);
+    if (!s) return "Other";
+    if (is("run", "running", "jog", "jogging")) return "Run";
+    if (is("walk", "walking")) return "Walk";
+    if (is("cycle", "cycling", "bike", "biking", "bicycle")) return "Cycle";
+    if (is("swim", "swimming")) return "Swim";
+    if (is("row", "rowing", "erg")) return "Row";
+    if (is("hike", "hiking")) return "Hike";
+    if (is("yoga")) return "Yoga";
+    if (is("football", "soccer")) return "Football";
+    if (is("hiit", "intervals")) return "HIIT";
+    if (is("gym", "weights", "lift", "lifting", "strength")) return "Gym";
+    return "Other";
+  }
+
+  // Replace your current importToLog with this
+  function importToLog(day: any, exercise?: string) {
+    // If user entered a custom name when type === "Other", try to map it
+    const effectiveType =
+      day.type === "Other" ? guessLogType(day.customType) : day.type || "Other";
+
+    const importPayload: any = {
+      type: effectiveType,
+      notes: exercise ? exercise : day.customType ? day.customType : "",
+      // keep the label visible if it remains Other
+      customType: effectiveType === "Other" ? day.customType || "" : undefined,
+    };
+
+    if (effectiveType === "Gym") {
+      const toPhases = (warm: any[], main: any[], cool: any[]) => [
+        { id: "Warm-Up", title: "Warm up", exercises: toExercises(warm) },
+        { id: "Main Set", title: "Main set", exercises: toExercises(main) },
+        { id: "Cool-Down", title: "Cool down", exercises: toExercises(cool) },
       ];
+
+      if (exercise) {
+        importPayload.phases = toPhases([], [exercise], []);
+      } else {
+        importPayload.phases = toPhases(day.warmUp, day.mainSet, day.coolDown);
+      }
+    } else {
+      // Non-gym: use the exact keys Log expects per type
+      switch (effectiveType) {
+        case "Run":
+        case "Walk":
+        case "Cycle":
+          importPayload.segments = {
+            distance: day.distance || "",
+            duration: day.time || "",
+          };
+          break;
+        case "Swim":
+          // You said Swim should use laps + poolLength + time
+          importPayload.segments = {
+            laps: day.laps || "",
+            poolLength: day.poolLength || "",
+            time: day.time || "",
+          };
+          break;
+        default:
+          // "Other" (or anything custom we can’t map): keep it simple
+          importPayload.segments = { duration: day.time || "" };
+          if (day.distance) importPayload.segments.distance = day.distance;
+          break;
+      }
     }
-    goToLog(entry);
+
+    // Navigate to Log and include a timestamp so the effect always runs
+    navigateToLog({ importToLog: importPayload, _ts: Date.now() });
   }
 
   function handleManualScheduleSubmit() {
@@ -334,11 +505,16 @@ export default function Schedule() {
 
     const isoDate = format(selectedDate, "yyyy-MM-dd");
     const newDay: any = {
+      id: newId(),
       date: isoDate,
       type: sessionType,
       done: false,
       frozen: false,
     };
+    if (sessionType === "Other") {
+      const label = (customType || "").trim();
+      if (label) newDay.customType = label; // keep type: "Other", add a label
+    }
 
     if (sessionType === "Gym") {
       newDay.warmUp = warmUpList
@@ -356,6 +532,10 @@ export default function Schedule() {
         .map(
           (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
         );
+    } else if (sessionType === "Swim") {
+      newDay.time = duration;
+      newDay.laps = laps;
+      newDay.poolLength = poolLength;
     } else {
       newDay.time = duration;
       newDay.distance = distance;
@@ -368,6 +548,9 @@ export default function Schedule() {
     setCoolDownList([{ name: "", sets: "", reps: "" }]);
     setDuration("");
     setDistance("");
+    setCustomType("");
+    setLaps("");
+    setPoolLength("");
   }
 
   const weekDates = Array.from({ length: 7 }, (_, i) =>
@@ -399,14 +582,25 @@ export default function Schedule() {
     createdAt: new Date().toISOString(),
   });
 
-  const makeCardioTemplateFromForm = (): FavTemplate => ({
-    id: `${Date.now()}`,
-    name: `${sessionType} – ${duration || 0}m`,
-    type: sessionType as TemplateType,
-    time: duration,
-    distance,
-    createdAt: new Date().toISOString(),
-  });
+  const makeCardioTemplateFromForm = (): FavTemplate =>
+    sessionType === "Swim"
+      ? {
+          id: `${Date.now()}`,
+          name: `Swim – ${duration || 0}m`,
+          type: "Swim",
+          time: duration,
+          laps,
+          poolLength,
+          createdAt: new Date().toISOString(),
+        }
+      : {
+          id: `${Date.now()}`,
+          name: `${sessionType} – ${duration || 0}m`,
+          type: sessionType as "Run" | "Cycle" | "Other",
+          time: duration,
+          distance,
+          createdAt: new Date().toISOString(),
+        };
 
   const applyTemplate = (t: FavTemplate) => {
     setSessionType(t.type);
@@ -429,6 +623,16 @@ export default function Schedule() {
       );
       setDuration("");
       setDistance("");
+      setLaps("");
+      setPoolLength("");
+    } else if (t.type === "Swim") {
+      setDuration(t.time || "");
+      setLaps(t.laps || "");
+      setPoolLength(t.poolLength || "");
+      setDistance("");
+      setWarmUpList([{ name: "", sets: "", reps: "" }]);
+      setMainSetList([{ name: "", sets: "", reps: "" }]);
+      setCoolDownList([{ name: "", sets: "", reps: "" }]);
     } else {
       setDuration(t.time || "");
       setDistance(t.distance || "");
@@ -437,46 +641,6 @@ export default function Schedule() {
       setCoolDownList([{ name: "", sets: "", reps: "" }]);
     }
   };
-
-  // const saveCurrentFormAsTemplate = async () => {
-  //   if (sessionType === "All") {
-  //     Alert.alert(
-  //       "Pick a Type",
-  //       "Please choose a specific session type before saving."
-  //     );
-  //     return;
-  //   }
-  //   const tpl =
-  //     sessionType === "Gym"
-  //       ? makeGymTemplateFromForm()
-  //       : makeCardioTemplateFromForm();
-
-  //   // (Optional) ask for a name; on Android fallback to auto-name
-  //   const setName = (name?: string) => {
-  //     const finalName = name && name.trim() ? name.trim() : tpl.name;
-  //     const next = [{ ...tpl, name: finalName }, ...favs].slice(0, 20); // keep last 20
-  //     saveFavs(next);
-  //   };
-
-  //   // iOS-only prompt
-  //   // @ts-ignore
-  //   if (Alert.prompt) {
-  //     // @ts-ignore
-  //     Alert.prompt(
-  //       "Save Template",
-  //       "Give your template a name",
-  //       [
-  //         { text: "Cancel", style: "cancel" },
-  //         { text: "Save", onPress: (text?: string) => setName(text) },
-  //       ],
-  //       "plain-text",
-  //       tpl.name
-  //     );
-  //   } else {
-  //     setName(); // Android fallback
-  //     Alert.alert("Saved", "Template added to your favorites.");
-  //   }
-  // };
 
   const removeTemplate = async (id: string) => {
     const next = favs.filter((f) => f.id !== id);
@@ -501,52 +665,65 @@ export default function Schedule() {
 
   const makeTemplateFromItem = (item: any): FavTemplate => ({
     id: `${Date.now()}`,
-    name: `${item.type} – ${format(parseISO(item.date), "dd/MM")}`,
-    type: item.type,
+    name: `${item.customType || item.type} – ${format(
+      parseISO(item.date),
+      "dd/MM"
+    )}`,
+    type: (item.type ?? "Other") as TemplateType, // keep union type
     warmUp: item.warmUp,
     mainSet: item.mainSet,
     coolDown: item.coolDown,
     time: item.time,
     distance: item.distance,
+    laps: item.laps,
+    poolLength: item.poolLength,
     createdAt: new Date().toISOString(),
   });
 
-  // const toggleFavoriteFromItem = async (item: any) => {
-  //   const tpl = makeTemplateFromItem(item);
-  //   const existing = favs.find((f) => isSimilarTemplate(f, tpl));
-  //   if (existing) {
-  //     await removeTemplate(existing.id);
-  //     Alert.alert("Removed", "Template removed from favorites.");
-  //   } else {
-  //     await saveFavs([{ ...tpl, name: tpl.name }, ...favs].slice(0, 20));
-  //     Alert.alert("Saved", "Template added to your favorites.");
-  //   }
-  // };
+  // Keep near your other fav helpers
+const uniqueName = (proposed: string, all: any[]) => {
+  if (!all.some(f => f.name?.trim() === proposed.trim())) return proposed;
+  let i = 2;
+  let candidate = `${proposed} (${i})`;
+  while (all.some(f => f.name?.trim() === candidate)) {
+    i += 1;
+    candidate = `${proposed} (${i})`;
+  }
+  return candidate;
+};
+
+const toggleFavoriteFromItem = async (item: any) => {
+  const tpl = makeTemplateFromItem(item);  // normalize item → favourite shape
+  const existing = favs.find((f) => isSimilarTemplate(f, tpl));
+
+  if (existing) {
+    // ✅ Already a favourite → remove
+    await removeTemplate(existing.id);
+    Alert.alert("Removed", "Template removed from favourites.");
+    return;
+  }
+
+  // ✅ First time → open naming flow (lets the user edit name)
+  startFavoriteFromItem(item); // uses your existing rename modal flow
+};
+
 
   const itemIsFavorited = (item: any) => {
     const tpl = makeTemplateFromItem(item);
     return favs.some((f) => isSimilarTemplate(f, tpl));
   };
-  // const startFavoriteFromForm = () => {
-  //   if (sessionType === "All") {
-  //     Alert.alert(
-  //       "Pick a Type",
-  //       "Please choose a specific session type before saving."
-  //     );
-  //     return;
-  //   }
-  //   const tpl =
-  //     sessionType === "Gym"
-  //       ? makeGymTemplateFromForm()
-  //       : makeCardioTemplateFromForm();
-  //   setPendingFav(tpl);
-  //   setFavName(tpl.name);
-  //   setShowFavSheet(true);
-  // };
 
   const saveFavouriteNow = async (tpl: FavTemplate, nameOverride?: string) => {
     const finalName = (nameOverride ?? tpl.name).trim() || tpl.name;
-    await saveFavs([{ ...tpl, name: finalName }, ...favs].slice(0, 20));
+    const candidate = { ...tpl, name: finalName };
+
+    const exists = favs.some((f) => isSimilarTemplate(f, candidate));
+    if (exists) {
+      Alert.alert("Already saved", "This favourite already exists.");
+      return;
+    }
+
+    await saveFavs([candidate, ...favs].slice(0, 20));
     Alert.alert("Saved", "Template added to your favourites.");
   };
 
@@ -681,7 +858,10 @@ export default function Schedule() {
           }}
         >
           <Text
-            style={[typography.h3, { color: colors.textPrimary, fontSize: 18, marginBottom: 10 }]}
+            style={[
+              typography.h3,
+              { color: colors.textPrimary, fontSize: 18, marginBottom: 10 },
+            ]}
           >
             Create a Session
           </Text>
@@ -754,7 +934,14 @@ export default function Schedule() {
           />
 
           {/* Session Type */}
-          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 10, marginBottom: 10 }}>
+          <Text
+            style={{
+              color: colors.textSecondary,
+              fontSize: 12,
+              marginTop: 10,
+              marginBottom: 10,
+            }}
+          >
             Type of session
           </Text>
           <ScrollView
@@ -798,51 +985,162 @@ export default function Schedule() {
           </ScrollView>
 
           {/* Distance + Duration for non-Gym */}
+          {/* Distance + Duration for non-Gym */}
           {sessionType !== "Gym" && sessionType !== "All" && (
             <View style={{ marginBottom: 8 }}>
-              <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                Duration (min)
-              </Text>
-              <TextInput
-                value={duration}
-                keyboardType="numeric"
-                onChangeText={setDuration}
-                style={{
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  padding: 8,
-                  borderRadius: 7,
-                  marginTop: 2,
-                  color: colors.textPrimary,
-                }}
-                placeholder="e.g. 30 (minutes)"
-                placeholderTextColor={colors.textSecondary}
-              />
+              {/* Only for "Other": optional custom label */}
+              {sessionType === "Other" && (
+                <>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    Activity name (optional)
+                  </Text>
+                  <TextInput
+                    value={customType}
+                    onChangeText={setCustomType}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. Pickleball, Hiking, Pilates..."
+                    placeholderTextColor={colors.textSecondary}
+                  />
+                </>
+              )}
 
-              <Text
-                style={{
-                  fontSize: 12,
-                  marginTop: 5,
-                  color: colors.textSecondary,
-                }}
-              >
-                Distance (km)
-              </Text>
-              <TextInput
-                value={distance}
-                keyboardType="numeric"
-                onChangeText={setDistance}
-                style={{
-                  borderWidth: 1,
-                  borderColor: colors.border,
-                  padding: 8,
-                  borderRadius: 7,
-                  marginTop: 2,
-                  color: colors.textPrimary,
-                }}
-                placeholder="e.g. 5.0 (kilometers)"
-                placeholderTextColor={colors.textSecondary}
-              />
+              {sessionType === "Swim" ? (
+                <>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: colors.textSecondary,
+                      marginTop: 8,
+                    }}
+                  >
+                    Laps
+                  </Text>
+                  <TextInput
+                    value={laps}
+                    keyboardType="numeric"
+                    onChangeText={setLaps}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. 20"
+                    placeholderTextColor={colors.textSecondary}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: colors.textSecondary,
+                      marginTop: 8,
+                    }}
+                  >
+                    Pool length (m)
+                  </Text>
+                  <TextInput
+                    value={poolLength}
+                    keyboardType="numeric"
+                    onChangeText={setPoolLength}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. 25"
+                    placeholderTextColor={colors.textSecondary}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: colors.textSecondary,
+                      marginTop: 8,
+                    }}
+                  >
+                    Time (min)
+                  </Text>
+                  <TextInput
+                    value={duration}
+                    keyboardType="numeric"
+                    onChangeText={setDuration}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. 45"
+                    placeholderTextColor={colors.textSecondary}
+                  />
+                </>
+              ) : (
+                <>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      color: colors.textSecondary,
+                      marginTop: 8,
+                    }}
+                  >
+                    Duration (min)
+                  </Text>
+                  <TextInput
+                    value={duration}
+                    keyboardType="numeric"
+                    onChangeText={setDuration}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. 30"
+                    placeholderTextColor={colors.textSecondary}
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      marginTop: 5,
+                      color: colors.textSecondary,
+                    }}
+                  >
+                    Distance (km)
+                  </Text>
+                  <TextInput
+                    value={distance}
+                    keyboardType="numeric"
+                    onChangeText={setDistance}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      padding: 8,
+                      borderRadius: 7,
+                      marginTop: 2,
+                      color: colors.textPrimary,
+                    }}
+                    placeholder="e.g. 5.0"
+                    placeholderTextColor={colors.textSecondary}
+                  />
+                </>
+              )}
             </View>
           )}
 
@@ -1300,25 +1598,25 @@ export default function Schedule() {
         }}
       >
         <Text
-            style={[
-              typography.h3,
-              {
-                color: colors.textPrimary,
-                marginTop: 5,
-                marginBottom: 10,
-                paddingBottom: 6,
-                paddingHorizontal: 15,
-                fontSize: 18,
-                fontWeight: "800",
-              },
-            ]}
-          >
-            Upcoming Schedule
-          </Text>
+          style={[
+            typography.h3,
+            {
+              color: colors.textPrimary,
+              marginTop: 5,
+              marginBottom: 10,
+              paddingBottom: 6,
+              paddingHorizontal: 15,
+              fontSize: 18,
+              fontWeight: "800",
+            },
+          ]}
+        >
+          Upcoming Schedule
+        </Text>
         <FlatList
           style={{ backgroundColor: colors.card }}
           data={sortedFiltered}
-          keyExtractor={(item, index) => `${item.date}-${index}`}
+          keyExtractor={(item, index) => String(stableKey(item, index))}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
@@ -1329,7 +1627,7 @@ export default function Schedule() {
           ListFooterComponent={<View style={{ height: insets.bottom + 24 }} />}
           renderItem={({ item, index }) => (
             <View
-              key={`${item.date}-${index}`}
+              // key={`${item.date}-${index}`}
               style={{
                 backgroundColor: colors.card,
                 borderRadius: 12,
@@ -1462,24 +1760,53 @@ export default function Schedule() {
                       fontSize: 14,
                     }}
                   >
-                    {item.type} Summary
+                    {item.customType || item.type} Summary
                   </Text>
-                  <Text
-                    style={{
-                      color: colors.textPrimary,
-                      marginBottom: 2,
-                      fontSize: 14,
-                    }}
-                  >
-                    • Time: {item.time || "-"} min
-                  </Text>
-                  <Text style={{ color: colors.textPrimary, fontSize: 14 }}>
-                    • Distance: {item.distance || "-"} km
-                  </Text>
+                  {item.type === "Swim" ? (
+                    <>
+                      <Text
+                        style={{
+                          color: colors.textPrimary,
+                          marginBottom: 2,
+                          fontSize: 14,
+                        }}
+                      >
+                        • Laps: {item.laps || "-"}
+                      </Text>
+                      <Text
+                        style={{
+                          color: colors.textPrimary,
+                          marginBottom: 2,
+                          fontSize: 14,
+                        }}
+                      >
+                        • Pool length: {item.poolLength || "-"} m
+                      </Text>
+                      <Text style={{ color: colors.textPrimary, fontSize: 14 }}>
+                        • Time: {item.time || "-"} min
+                      </Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text
+                        style={{
+                          color: colors.textPrimary,
+                          marginBottom: 2,
+                          fontSize: 14,
+                        }}
+                      >
+                        • Time: {item.time || "-"} min
+                      </Text>
+                      <Text style={{ color: colors.textPrimary, fontSize: 14 }}>
+                        • Distance: {item.distance || "-"} km
+                      </Text>
+                    </>
+                  )}
                 </View>
               )}
               <TouchableOpacity
-                onPress={() => startFavoriteFromItem(item)}
+                onPress={() => toggleFavoriteFromItem(item)}
+                onLongPress={() => startFavoriteFromItem(item)}
                 style={{
                   position: "absolute",
                   top: 55,

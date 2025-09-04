@@ -137,6 +137,7 @@ export default function Dashboard() {
   const [streak, setStreak] = useState<number>(0);
   const fasting = useFastingState();
   const [weekEntries, setWeekEntries] = useState<any[]>([]);
+  
 
   // console.log("ChartData>>>", chartData);
   const isMiddayOnWeekEnd = (date: Date) => {
@@ -424,7 +425,7 @@ export default function Dashboard() {
     const weekData = error || !Array.isArray(data) ? [] : data;
     setWeekEntries(weekData);
     setChartData(
-      weekData.filter((e) => ["Gym", "Run", "Cycle", "Swim"].includes(e.type))
+      weekData.filter((e) => ["Gym", "Run", "Cycle", "Swim", "Walk", "Yoga", "Football", "Other"].includes(e.type))
     );
   };
 
