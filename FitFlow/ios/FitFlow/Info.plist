@@ -44,6 +44,19 @@
       <key>NSAllowsLocalNetworking</key>
       <true/>
     </dict>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to use Face ID</string>
+    <key>NSUserTrackingUsageDescription</key>
+    <string>We use your device identifier to deliver more relevant ads.</string>
+    <key>RCTNewArchEnabled</key>
+    <true/>
+    <key>SKAdNetworkItems</key>
+    <array>
+      <dict>
+        <key>SKAdNetworkIdentifier</key>
+        <string>cstr6suwn9.skadnetwork</string>
+      </dict>
+    </array>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

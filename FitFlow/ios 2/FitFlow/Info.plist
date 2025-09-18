@@ -33,6 +33,10 @@
     </array>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>GADApplicationIdentifier</key>
+    <string>ca-app-pub-4020157509999759~2070890689</string>
+    <key>GADDelayAppMeasurementInit</key>
+    <false/>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>LSRequiresIPhoneOS</key>
@@ -44,6 +48,17 @@
       <key>NSAllowsLocalNetworking</key>
       <true/>
     </dict>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Allow $(PRODUCT_NAME) to use Face ID</string>
+    <key>NSUserTrackingUsageDescription</key>
+    <string>We use your device identifier to deliver more relevant ads.</string>
+    <key>SKAdNetworkItems</key>
+    <array>
+      <dict>
+        <key>SKAdNetworkIdentifier</key>
+        <string>cstr6suwn9.skadnetwork</string>
+      </dict>
+    </array>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

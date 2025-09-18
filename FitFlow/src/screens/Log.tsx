@@ -4,7 +4,11 @@
 // Drop-in replacement for Log.tsx. Keeps features, removes ~60% of code via config.
 
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import {
+  CommonActions,
+  useNavigation,
+  useRoute,
+} from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
@@ -21,6 +25,7 @@ import {
   View,
 } from "react-native";
 import { supabase } from "../lib/api";
+import { hasPro, hasProAI, useEntitlements } from "../lib/entitlements";
 import {
   Template,
   templatePreview,
@@ -701,6 +706,23 @@ export default function Log() {
   const setField = (k: string, v: string) => setSeg((s) => ({ ...s, [k]: v }));
   const userIdRef = useRef<string | null>(null);
 
+  // Entitlements
+  const ent = useEntitlements();
+  const isProTier = hasPro(ent) || hasProAI(ent);
+
+  // Free users get only these two
+  const BASIC_TEMPLATE_NAMES = ["Full Body (Balanced)", "Upper Body"];
+
+  // Which templates to render in the list
+  const visibleTemplates = useMemo(() => {
+    if (isProTier) return templates; // all
+    return templates.filter((t) => BASIC_TEMPLATE_NAMES.includes(t.name));
+  }, [isProTier]);
+
+  // Helper to decide if a template is locked for this user
+  const isTemplateLocked = (tplName: string) =>
+    !isProTier && !BASIC_TEMPLATE_NAMES.includes(tplName);
+
   useEffect(() => {
     let mounted = true;
     supabase.auth.getSession().then(({ data }) => {
@@ -716,6 +738,28 @@ export default function Log() {
   // const [exercises, dispatch] = useReducer(gymReducer, [
   //   { name: "", sets: [{ reps: "", weight: "" }] },
   // ]);
+
+  const onLockedTemplatePress = () => {
+    Alert.alert(
+      "Pro template",
+      "Unlock the full template library (including Yoga, HIIT, and Swim) with Pro or Pro+AI.",
+      [
+        { text: "Use free templates", style: "cancel" }, // stays on page
+        {
+          text: "See plans",
+          onPress: () =>
+            navigation.dispatch(
+              CommonActions.navigate({
+                name: "Home", // <-- your tab navigator route name
+                params: {
+                  screen: "Paywall", // <-- the tab/screen inside MainTabs
+                },
+              })
+            ),
+        },
+      ]
+    );
+  };
 
   const [phases, dispatchPhases] = useReducer(phasesReducer, DEFAULT_PHASES);
 
@@ -921,7 +965,6 @@ export default function Log() {
     setOpen(true);
   }
 
-
   // at top with other state
   const [lastImportSig, setLastImportSig] = useState<string>("");
 
@@ -1087,13 +1130,28 @@ export default function Log() {
         >
           Workout Templates
         </Text>
-        {templates.map((tpl) => (
+
+        {visibleTemplates.map((tpl) => (
           <TouchableOpacity
             key={tpl.name}
-            onPress={() => startFromTemplate(tpl)}
-            // onPress={() =>
-            //   start({ name: tpl.name, exercises: tpl.exercises }, "Gym")
-            // }
+            onPress={() => {
+              // If somehow a locked one sneaks in (defensive), gate it
+              if (isTemplateLocked(tpl.name)) {
+                Alert.alert(
+                  "Unlock with Pro",
+                  "Get the full template library including Yoga, HIIT, and Swim.",
+                  [
+                    { text: "Maybe later", style: "cancel" },
+                    {
+                      text: "See plans",
+                      onPress: () => (navigation as any).navigate("Premium"),
+                    },
+                  ]
+                );
+                return;
+              }
+              startFromTemplate(tpl);
+            }}
             activeOpacity={0.9}
             style={[styles.templateCard]}
           >
@@ -1107,6 +1165,31 @@ export default function Log() {
             </Text>
           </TouchableOpacity>
         ))}
+
+        {/* Optional: subtle upsell card for Free users */}
+        {!isProTier && (
+          <TouchableOpacity
+            onPress={onLockedTemplatePress}
+            activeOpacity={0.9}
+            style={[
+              styles.templateCard,
+              {
+                borderStyle: "solid",
+                borderColor: colors.card,
+                backgroundColor: colors.accent,
+              },
+            ]}
+          >
+            <Text
+              style={{ color: textPrimary, fontWeight: "700", marginBottom: 6 }}
+            >
+              Unlock more templates
+            </Text>
+            <Text style={{ color: textSecondary, fontSize: 13 }}>
+              Yoga, HIIT, Swim and full packs with Pro or Pro+AI.
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       {/* Sheet Modal */}
@@ -1510,7 +1593,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   templateCard: {
-    backgroundColor: "transparent",
+    //backgroundColor: "transparent",
     padding: UI.PAD,
     borderRadius: 12,
     marginHorizontal: 16,

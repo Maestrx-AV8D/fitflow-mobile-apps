@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendMail } from "./mailer.ts"; // your SMTP helper
 
 // Read from Deno env
-const SUPABASE_URL      = 'hhttps://gbelcrrcplsosonxskkt.functions.supabase.co' //Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_URL      = 'https://gbelcrrcplsosonxskkt.functions.supabase.co' //Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9' //Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 // Init Supabase with service key

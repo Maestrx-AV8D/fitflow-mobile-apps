@@ -14,6 +14,7 @@ export default {
       supportsTablet: true,
       bundleIdentifier: "com.yourcompany.fitflow",
       infoPlist: {
+        NSUserTrackingUsageDescription: "We use your device identifier to deliver more relevant ads.",
         CFBundleURLTypes: [
           {
             CFBundleURLSchemes: ["fitflow"]
@@ -56,7 +57,7 @@ export default {
         }
       ]
     ],
-    sdkVersion: "53.0.0",
+    sdkVersion: "54.0.0",
     extra: {
       SUPABASE_URL: process.env.SUPABASE_URL,
       SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,

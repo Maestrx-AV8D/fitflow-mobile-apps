@@ -5,12 +5,13 @@ import {
   useRoute,
 } from "@react-navigation/native";
 import {
-  add,
   addDays,
   format,
+  isAfter,
   isBefore,
   isSameDay,
   parseISO,
+  startOfDay,
   startOfWeek,
 } from "date-fns";
 import React, { useEffect, useState } from "react";
@@ -21,6 +22,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -31,10 +33,11 @@ import { getSchedule, saveSchedule, saveToHistory } from "../lib/api";
 
 import { useTheme } from "../theme/theme";
 
-import { MaterialIcons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { hasPro, hasProAI, useEntitlements } from "../lib/entitlements";
 import { MainStackParamList, RootTabParamList } from "../navigation/types";
 
 type TemplateType = "Gym" | "Run" | "Swim" | "Cycle" | "Other";
@@ -112,6 +115,34 @@ export default function Schedule() {
   const withId = (x: any) => (x && x.id ? x : { ...x, id: newId() });
   const stableKey = (it: any, idx: number) =>
     it?.id ?? `${it?.date ?? "na"}-${it?.type ?? "na"}-${idx}`;
+
+  // ✅ Entitlements (single source of truth)
+  const ent = useEntitlements();
+  const isPro = hasPro(ent);
+  const isProAI = hasProAI(ent);
+
+  // ✅ Gates
+  const canImport = isPro || isProAI;
+  const canRepeat = isPro || isProAI;
+  const favCap = isProAI ? 10 : isPro ? 5 : 2;
+  const maxAdvanceDays = isProAI ? 14 : isPro ? 7 : 3;
+
+  // …
+  const [repeatWeekly, setRepeatWeekly] = useState(false); // ✅ new
+
+  // ✅ Today (start of day), start of this week (Mon), and the tier horizon
+  const today = new Date();
+  const weekStart = startOfWeek(today, { weekStartsOn: 1 }); // 1 = Monday (change to 0 for Sunday if you prefer)
+  const horizonEnd = addDays(today, maxAdvanceDays);
+
+  // ✅ Build the strip from week start → horizon (inclusive)
+  const pickerDates = React.useMemo(() => {
+    const arr: Date[] = [];
+    for (let d = weekStart; d <= horizonEnd; d = addDays(d, 1)) {
+      arr.push(d);
+    }
+    return arr;
+  }, [weekStart.getTime(), horizonEnd.getTime()]);
 
   const [gymSections, setGymSections] = useState<{
     warmUp: GymEx[];
@@ -438,6 +469,25 @@ export default function Schedule() {
       customType: effectiveType === "Other" ? day.customType || "" : undefined,
     };
 
+    if (!canImport) {
+      Alert.alert("Import requires Pro", "Import to Log is available on Pro.", [
+        { text: "Not now", style: "cancel" },
+        {
+          text: "See plans",
+          onPress: () =>
+            navigation.dispatch(
+              CommonActions.navigate({
+                name: "Home", // <-- your tab navigator route name
+                params: {
+                  screen: "Paywall", // <-- the tab/screen inside MainTabs
+                },
+              })
+            ),
+        },
+      ]);
+      return;
+    }
+
     if (effectiveType === "Gym") {
       const toPhases = (warm: any[], main: any[], cool: any[]) => [
         { id: "Warm-Up", title: "Warm up", exercises: toExercises(warm) },
@@ -480,26 +530,72 @@ export default function Schedule() {
     // Navigate to Log and include a timestamp so the effect always runs
     navigateToLog({ importToLog: importPayload, _ts: Date.now() });
   }
+  // Inclusive bounds: [today, horizonEnd]
+  const withinHorizon = (d: Date | null) => {
+    if (!d) return false;
+    const dd = startOfDay(d);
+    const start = startOfDay(today);
+    const end = startOfDay(horizonEnd);
+    return !isBefore(dd, start) && !isAfter(dd, end);
+  };
+
+  // ✅ Has content checks
+  const hasGymContent = React.useMemo(() => {
+    const lists = [warmUpList, mainSetList, coolDownList];
+    return lists.some((list) => list.some((e) => e.name?.trim()));
+  }, [warmUpList, mainSetList, coolDownList]);
+
+  const hasCardioContent = React.useMemo(() => {
+    if (sessionType === "Swim") {
+      // allow if *any* is provided (laps/pool/time) — tighten if you want both laps+pool
+      return !!(laps.trim() || poolLength.trim() || duration.trim());
+    }
+    if (
+      sessionType === "Run" ||
+      sessionType === "Cycle" ||
+      sessionType === "Other"
+    ) {
+      return !!(duration.trim() || distance.trim());
+    }
+    return false;
+  }, [sessionType, duration, distance, laps, poolLength]);
+
+  const canSubmit = React.useMemo(() => {
+    if (!withinHorizon(selectedDate)) return false;
+    console.log("withinHorizon", selectedDate, withinHorizon(selectedDate));
+    if (sessionType === "All") return false;
+    return sessionType === "Gym" ? hasGymContent : hasCardioContent;
+  }, [selectedDate, sessionType, hasGymContent, hasCardioContent]);
 
   function handleManualScheduleSubmit() {
-    if (sessionType === "All") {
-      Alert.alert(
-        "Pick a Type",
-        "Please choose a specific session type before adding."
-      );
-      return;
-    }
     if (!selectedDate) {
       Alert.alert("Missing Date", "Please select a date.");
       return;
     }
-    const today = new Date();
-    const limit = addDays(today, 7);
-    if (isBefore(limit, selectedDate)) {
-      Alert.alert(
-        "Too Far Ahead",
-        "You can only schedule within 7 days from today."
-      );
+    const limit = addDays(today, maxAdvanceDays);
+
+    const end = startOfDay(horizonEnd);
+    // isAfter(dd, end)
+    const after = isAfter(today, end);
+    if (!canSubmit) {
+      let note = "";
+      let msg = "";
+      if (!withinHorizon(selectedDate)) {
+        note = `Too Far ${after ? "Ahead" : "Back"}`;
+        msg = `You can only schedule within ${maxAdvanceDays} day${
+          maxAdvanceDays === 3 ? "" : "s"
+        } from today.`;
+      } else if (sessionType === "All") {
+        note = "Pick a Type";
+        msg = "Please choose a specific session type.";
+      } else if (sessionType === "Gym") {
+        msg = "Add at least one exercise to Warm-Up, Main Set or Cool-Down.";
+      } else if (sessionType === "Swim") {
+        msg = "Enter laps, pool length or time for your swim.";
+      } else {
+        msg = "Enter duration or distance.";
+      }
+      Alert.alert(note, msg);
       return;
     }
 
@@ -511,6 +607,7 @@ export default function Schedule() {
       done: false,
       frozen: false,
     };
+
     if (sessionType === "Other") {
       const label = (customType || "").trim();
       if (label) newDay.customType = label; // keep type: "Other", add a label
@@ -541,7 +638,30 @@ export default function Schedule() {
       newDay.distance = distance;
     }
 
-    persist([...plan, newDay]);
+    const items: any[] = [newDay];
+    if (repeatWeekly && canRepeat) {
+      for (let plus = 7; ; plus += 7) {
+        const d = addDays(selectedDate, plus);
+        if (isBefore(limit, d)) break; // don't exceed horizon
+        items.push({
+          ...newDay,
+          id: newId(),
+          date: format(d, "yyyy-MM-dd"),
+        });
+      }
+    }
+
+    // Merge by (date + type/customType) to avoid dupes
+    const byKey = new Map<string, any>();
+    [...plan, ...items].forEach((item) => {
+      const key = `${item.date}::${item.customType || item.type}`;
+      byKey.set(key, item);
+    });
+    const merged = Array.from(byKey.values()).sort(
+      (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()
+    );
+
+    persist(merged);
     setSelectedDate(null);
     setWarmUpList([{ name: "", sets: "", reps: "" }]);
     setMainSetList([{ name: "", sets: "", reps: "" }]);
@@ -551,11 +671,20 @@ export default function Schedule() {
     setCustomType("");
     setLaps("");
     setPoolLength("");
+    setRepeatWeekly(false);
   }
 
-  const weekDates = Array.from({ length: 7 }, (_, i) =>
-    add(startOfWeek(new Date(), { weekStartsOn: 1 }), { days: i })
-  );
+  // const weekDates = Array.from({ length: 7 }, (_, i) =>
+  //   add(startOfWeek(new Date(), { weekStartsOn: 1 }), { days: i })
+  // );
+
+  // // Replace the old "startOfWeek" weekDates:
+  // const pickerDates = Array.from({ length: maxAdvanceDays + 1 }, (_, i) =>
+  //   // addDays(new Date(), i)
+  //     addDays(startOfWeek(new Date(), { weekStartsOn: 1 }),  i)
+  // );
+
+  // inside Schedule() — keep your existing entitlements logic that sets `maxAdvanceDays`
 
   // Dynamic padding to push header below the status bar while letting the card color paint under it
   const headerPadTop = insets.top + 12;
@@ -681,32 +810,54 @@ export default function Schedule() {
   });
 
   // Keep near your other fav helpers
-const uniqueName = (proposed: string, all: any[]) => {
-  if (!all.some(f => f.name?.trim() === proposed.trim())) return proposed;
-  let i = 2;
-  let candidate = `${proposed} (${i})`;
-  while (all.some(f => f.name?.trim() === candidate)) {
-    i += 1;
-    candidate = `${proposed} (${i})`;
-  }
-  return candidate;
-};
+  const uniqueName = (proposed: string, all: any[]) => {
+    if (!all.some((f) => f.name?.trim() === proposed.trim())) return proposed;
+    let i = 2;
+    let candidate = `${proposed} (${i})`;
+    while (all.some((f) => f.name?.trim() === candidate)) {
+      i += 1;
+      candidate = `${proposed} (${i})`;
+    }
+    return candidate;
+  };
 
-const toggleFavoriteFromItem = async (item: any) => {
-  const tpl = makeTemplateFromItem(item);  // normalize item → favourite shape
-  const existing = favs.find((f) => isSimilarTemplate(f, tpl));
+  const toggleFavoriteFromItem = async (item: any) => {
+    const tpl = makeTemplateFromItem(item); // normalize item → favourite shape
+    const existing = favs.find((f) => isSimilarTemplate(f, tpl));
 
-  if (existing) {
-    // ✅ Already a favourite → remove
-    await removeTemplate(existing.id);
-    Alert.alert("Removed", "Template removed from favourites.");
-    return;
-  }
+    if (existing) {
+      // ✅ Already a favourite → remove
+      await removeTemplate(existing.id);
+      Alert.alert("Removed", "Template removed from favourites.");
+      return;
+    }
 
-  // ✅ First time → open naming flow (lets the user edit name)
-  startFavoriteFromItem(item); // uses your existing rename modal flow
-};
+    if (favs.length >= favCap) {
+      Alert.alert(
+        "Favourite limit reached",
+        `You can save up to ${favCap} favourites on your plan.`,
+        [
+          { text: "OK" },
+          {
+            text: "Upgrade",
+            onPress: () =>
+              navigation.dispatch(
+                CommonActions.navigate({
+                  name: "Home", // <-- your tab navigator route name
+                  params: {
+                    screen: "Paywall", // <-- the tab/screen inside MainTabs
+                  },
+                })
+              ),
+          },
+        ]
+      );
+      return;
+    }
 
+    // ✅ First time → open naming flow (lets the user edit name)
+    startFavoriteFromItem(item); // uses your existing rename modal flow
+  };
 
   const itemIsFavorited = (item: any) => {
     const tpl = makeTemplateFromItem(item);
@@ -732,6 +883,28 @@ const toggleFavoriteFromItem = async (item: any) => {
       Alert.alert(
         "Pick a Type",
         "Please choose a specific session type before saving."
+      );
+      return;
+    }
+    if (favs.length >= favCap) {
+      Alert.alert(
+        "Favourite limit reached",
+        `You can save up to ${favCap} favourites on your plan.`,
+        [
+          { text: "OK" },
+          {
+            text: "Upgrade",
+            onPress: () =>
+              navigation.dispatch(
+                CommonActions.navigate({
+                  name: "Home", // <-- your tab navigator route name
+                  params: {
+                    screen: "Paywall", // <-- the tab/screen inside MainTabs
+                  },
+                })
+              ),
+          },
+        ]
       );
       return;
     }
@@ -792,6 +965,28 @@ const toggleFavoriteFromItem = async (item: any) => {
 
   const confirmSaveFavorite = async () => {
     if (!pendingFav) return;
+    if (favs.length >= favCap) {
+      Alert.alert(
+        "Favourite limit reached",
+        `You can save up to ${favCap} favourites on your plan.`,
+        [
+          { text: "OK" },
+          {
+            text: "Upgrade",
+            onPress: () =>
+              navigation.dispatch(
+                CommonActions.navigate({
+                  name: "Home", // <-- your tab navigator route name
+                  params: {
+                    screen: "Paywall", // <-- the tab/screen inside MainTabs
+                  },
+                })
+              ),
+          },
+        ]
+      );
+      return;
+    }
     const finalName = favName.trim() || pendingFav.name;
     const toSave = { ...pendingFav, name: finalName };
     await saveFavs([toSave, ...favs].slice(0, 20));
@@ -872,22 +1067,31 @@ const toggleFavoriteFromItem = async (item: any) => {
               marginBottom: 8,
             }}
           >
-            Schedule up to 7 days in advance
+            Schedule up to {maxAdvanceDays} day{maxAdvanceDays === 3 ? "" : "s"}{" "}
+            in advance
           </Text>
 
           {/* Date Picker */}
+          {/* Date Picker */}
           <FlatList
             horizontal
-            data={weekDates}
+            data={pickerDates}
             keyExtractor={(item) => item.toISOString()}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ marginBottom: 8 }}
             renderItem={({ item }) => {
+              const disabled =
+                isBefore(item, today) || isAfter(item, horizonEnd);
               const isSelected = selectedDate && isSameDay(item, selectedDate);
               const isToday = isSameDay(item, new Date());
               const isGreyedOut = !isToday && !isSelected;
+
               return (
                 <TouchableOpacity
+                  // disabled={disabled}
+                  // onPress={() => {
+                  //   if (!disabled) setSelectedDate(item);
+                  // }}
                   onPress={() => setSelectedDate(item)}
                   style={{
                     paddingVertical: 8,
@@ -900,6 +1104,7 @@ const toggleFavoriteFromItem = async (item: any) => {
                       ? colors.primary
                       : colors.inputBackground,
                     alignItems: "center",
+                    opacity: disabled ? 0.45 : 1,
                     ...cardShadow,
                   }}
                 >
@@ -983,6 +1188,49 @@ const toggleFavoriteFromItem = async (item: any) => {
               </TouchableOpacity>
             ))}
           </ScrollView>
+          {/* Repeat weekly (Pro & Pro+AI) */}
+          {sessionType !== "All" && (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <Switch
+                value={repeatWeekly}
+                onValueChange={(v) => {
+                  if (!canRepeat) {
+                    Alert.alert(
+                      "Upgrade to repeat",
+                      "Weekly repeating is available on Pro.",
+                      [
+                        { text: "Not now", style: "cancel" },
+                        {
+                          text: "See plans",
+                          onPress: () =>
+                            navigation.dispatch(
+                              CommonActions.navigate({
+                                name: "Home", // <-- your tab navigator route name
+                                params: {
+                                  screen: "Paywall", // <-- the tab/screen inside MainTabs
+                                },
+                              })
+                            ),
+                        },
+                      ]
+                    );
+                    return;
+                  }
+                  setRepeatWeekly(v);
+                }}
+              />
+              <Text style={{ marginLeft: 8, color: colors.textSecondary }}>
+                Repeat weekly
+                {!canRepeat ? " (Pro)" : ""}
+              </Text>
+            </View>
+          )}
 
           {/* Distance + Duration for non-Gym */}
           {/* Distance + Duration for non-Gym */}
@@ -1508,66 +1756,100 @@ const toggleFavoriteFromItem = async (item: any) => {
             </ScrollView>
           )}
 
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 5,
-            }}
-          >
-            {/* Submit */}
-            <TouchableOpacity
-              onPress={handleManualScheduleSubmit}
+          {sessionType !== "All" && (
+            <View
               style={{
-                marginTop: 12,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 10,
-                backgroundColor: colors.success + "22",
-                alignSelf: "flex-start",
-                ...cardShadow,
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 5,
               }}
             >
-              <Text
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={handleManualScheduleSubmit}
                 style={{
-                  color: colors.success,
-                  fontWeight: "600",
-                  fontSize: 16,
+                  marginTop: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: canSubmit
+                    ? colors.success + "22"
+                    : colors.border,
+                  alignSelf: "flex-end",
+                  left: 170,
+                  ...cardShadow,
                 }}
               >
-                Add to Schedule
-              </Text>
-            </TouchableOpacity>
+                <Text
+                  style={{
+                    color: canSubmit ? colors.success : colors.textSecondary,
+                    fontWeight: "600",
+                    fontSize: 16,
+                  }}
+                >
+                  Add to Schedule
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => {
-                // open sheet to browse favourites or save current form as a new favourite
-                setPendingFav(null); // browsing mode by default
-                setFavName("");
-                setShowFavSheet(true);
-              }}
-              style={{
-                marginTop: 12,
-                //marginRight: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 10,
-                backgroundColor: colors.accent + "22",
-                alignSelf: "flex-start",
-                ...cardShadow,
-              }}
-            >
-              <Text
+              <TouchableOpacity
+                onPress={() => {
+                  // open sheet to browse favourites or save current form as a new favourite
+                  setPendingFav(null); // browsing mode by default
+                  setFavName("");
+                  setShowFavSheet(true);
+                }}
+                style={{
+                  position: "absolute",
+                  marginTop: 12,
+                  //marginRight: 8,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  backgroundColor: colors.accent,
+                  alignContent: "flex-end",
+                  right: 0,
+                  ...cardShadow,
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {/* <Text
                 style={{
                   color: colors.accent,
+                  opacity: 0.95,
                   fontWeight: "600",
                   fontSize: 16,
                 }}
               >
                 Favourites ⭐
-              </Text>
-            </TouchableOpacity>
-          </View>
+              </Text> */}
+                <Ionicons name="heart" size={20} color={colors.background} />
+              </TouchableOpacity>
+
+              {/* <TouchableOpacity
+                onPress={() => toggleFavoriteFromItem(item)}
+                onLongPress={() => startFavoriteFromItem(item)}
+                style={{
+                  position: "absolute",
+                  top: 55,
+                  right: 15,
+                  padding: 6,
+                  borderRadius: 16,
+                  backgroundColor: colors.inputBackground,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <MaterialIcons
+                  name={itemIsFavorited(item) ? "star" : "star-border"}
+                  size={18}
+                  color={
+                    itemIsFavorited(item) ? colors.accent : colors.textSecondary
+                  }
+                />
+              </TouchableOpacity> */}
+            </View>
+          )}
 
           {/* Upcoming Heading */}
           {/* <Text
@@ -1683,7 +1965,33 @@ const toggleFavoriteFromItem = async (item: any) => {
                       </Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity onPress={() => importToLog(item)}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!canImport) {
+                        Alert.alert(
+                          "Import requires Pro",
+                          "Import to Log is available on Pro.",
+                          [
+                            { text: "Not now", style: "cancel" },
+                            {
+                              text: "See plans",
+                              onPress: () =>
+                                navigation.dispatch(
+                                  CommonActions.navigate({
+                                    name: "Home", // <-- your tab navigator route name
+                                    params: {
+                                      screen: "Paywall", // <-- the tab/screen inside MainTabs
+                                    },
+                                  })
+                                ),
+                            },
+                          ]
+                        );
+                        return;
+                      }
+                      importToLog(item);
+                    }}
+                  >
                     <Text
                       style={{
                         fontWeight: "600",
@@ -1812,15 +2120,15 @@ const toggleFavoriteFromItem = async (item: any) => {
                   top: 55,
                   right: 15,
                   padding: 6,
-                  borderRadius: 16,
+                  borderRadius: 15,
                   backgroundColor: colors.inputBackground,
                   borderWidth: 1,
                   borderColor: colors.border,
                 }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <MaterialIcons
-                  name={itemIsFavorited(item) ? "star" : "star-border"}
+                <Ionicons
+                  name={itemIsFavorited(item) ? "heart" : "heart-outline"}
                   size={18}
                   color={
                     itemIsFavorited(item) ? colors.accent : colors.textSecondary
@@ -1912,7 +2220,7 @@ const toggleFavoriteFromItem = async (item: any) => {
                 paddingHorizontal: 12,
               }}
             >
-              Your saved templates
+              Your saved templates · {Math.min(favs.length, favCap)}/{favCap}
             </Text>
             <ScrollView
               horizontal
