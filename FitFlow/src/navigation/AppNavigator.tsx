@@ -34,14 +34,15 @@ export default function AppNavigator() {
       <FastingCompletionObserver />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
-          
-            <Stack.Screen name="Main" component={MainTabs} />
-          
-        ) : hasOnboarded ? (
-          <Stack.Screen name="SignIn" component={SignIn} />
-        ) : (
+          <Stack.Screen name="Main" component={MainTabs} />
+        ) : !hasOnboarded ? (
           <Stack.Screen name="Onboarding" component={Onboarding} />
+        ) : (
+         <Stack.Screen name="Main" component={MainTabs} />
         )}
+
+        {/* Always register SignIn so it can be navigated to when upgrading */}
+        <Stack.Screen name="SignIn" component={SignIn} />
       </Stack.Navigator>
     </NavigationContainer>
   );

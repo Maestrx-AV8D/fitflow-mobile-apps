@@ -1,9 +1,14 @@
+// src/screens/Schedule.tsx
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import {
   CommonActions,
   CompositeNavigationProp,
   useNavigation,
   useRoute,
 } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import {
   add,
   addDays,
@@ -13,29 +18,67 @@ import {
   parseISO,
   startOfWeek,
 } from "date-fns";
-import React, { useEffect, useState } from "react";
+import { LinearGradient } from "expo-linear-gradient";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Dimensions,
   FlatList,
+  KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
   TouchableOpacity,
+  UIManager,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { getSchedule, saveSchedule, saveToHistory } from "../lib/api";
-
+import { MainStackParamList, RootTabParamList } from "../navigation/types";
 import { useTheme } from "../theme/theme";
 
-import { MaterialIcons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { MainStackParamList, RootTabParamList } from "../navigation/types";
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// ✨ Design tokens (new)
+const RADIUS = 14;
+const CARD_RADIUS = 16;
+const SECTION_GAP = 12;
+
+// Contrast helper to ensure readable text on any primary color
+const getContrastText = (bg: string) => {
+  try {
+    let r = 0, g = 0, b = 0, a = 1;
+    if (bg.startsWith("#")) {
+      const hex = bg.slice(1);
+      const toInt = (h: string) => parseInt(h, 16);
+      if (hex.length === 3) {
+        r = toInt(hex[0] + hex[0]); g = toInt(hex[1] + hex[1]); b = toInt(hex[2] + hex[2]);
+      } else if (hex.length === 6 || hex.length === 8) {
+        r = toInt(hex.slice(0, 2)); g = toInt(hex.slice(2, 4)); b = toInt(hex.slice(4, 6));
+        if (hex.length === 8) a = toInt(hex.slice(6, 8)) / 255;
+      }
+    } else if (bg.startsWith("rgb")) {
+      const nums = bg.replace(/rgba?\(/, "").replace(")", "").split(",").map((n) => parseFloat(n.trim()));
+      [r, g, b, a] = [nums[0] || 0, nums[1] || 0, nums[2] || 0, nums[3] ?? 1];
+    }
+    if (a < 0.35) return "#000";
+    const toLinear = (v: number) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+    return L > 0.45 ? "#000" : "#fff";
+  } catch {
+    return "#fff";
+  }
+};
 
 type TemplateType = "Gym" | "Run" | "Swim" | "Cycle" | "Other";
 type FavTemplate = {
@@ -64,13 +107,6 @@ type ImportedScheduleParam = {
   distance?: string;
 }[];
 
-const cardShadow = {
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.1,
-  shadowRadius: 4,
-  elevation: 2,
-};
 type ScheduleNav = CompositeNavigationProp<
   BottomTabNavigationProp<RootTabParamList, "Schedule">,
   NativeStackNavigationProp<MainStackParamList>
@@ -79,70 +115,80 @@ type ScheduleNav = CompositeNavigationProp<
 type SetRow = { reps: string; weight: string; completed?: boolean };
 type GymEx = { name: string; setsArr: SetRow[] };
 
+
 export default function Schedule() {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<ScheduleNav>();
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
+  const { colors, typography, gradients, shadow, isDark } = useTheme();
+
+  // Core schedule state
   const [plan, setPlan] = useState<any[]>([]);
   const [showCompleted, setShowCompleted] = useState(true);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [warmUpList, setWarmUpList] = useState<
-    { name: string; sets: string; reps: string }[]
-  >([{ name: "", sets: "", reps: "" }]);
-  const [mainSetList, setMainSetList] = useState<
-    { name: string; sets: string; reps: string }[]
-  >([{ name: "", sets: "", reps: "" }]);
-  const [coolDownList, setCoolDownList] = useState<
-    { name: string; sets: string; reps: string }[]
-  >([{ name: "", sets: "", reps: "" }]);
   const [sessionType, setSessionType] = useState("Gym");
+
+  // Non-gym inputs
   const [duration, setDuration] = useState("");
   const [distance, setDistance] = useState("");
-  const { colors, spacing, typography } = useTheme();
   const [customType, setCustomType] = useState("");
-  // under the other useState lines
   const [laps, setLaps] = useState("");
   const [poolLength, setPoolLength] = useState("");
 
-  const emptySet: SetRow = { reps: "", weight: "", completed: false };
-  const emptyEx: GymEx = { name: "", setsArr: [{ ...emptySet }] };
+  // Gym inputs
+  const [warmUpList, setWarmUpList] = useState([{ name: "", sets: "", reps: "" }]);
+  const [mainSetList, setMainSetList] = useState([{ name: "", sets: "", reps: "" }]);
+  const [coolDownList, setCoolDownList] = useState([{ name: "", sets: "", reps: "" }]);
 
-  // stable id + key helpers
-  const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const withId = (x: any) => (x && x.id ? x : { ...x, id: newId() });
-  const stableKey = (it: any, idx: number) =>
-    it?.id ?? `${it?.date ?? "na"}-${it?.type ?? "na"}-${idx}`;
+  // Legacy import-to-log compatibility
+  const [type, setType] = useState("Gym");
+  const [notes, setNotes] = useState("");
+  const [seg, setSeg] = useState<any>({});
+  const [open, setOpen] = useState(false);
 
-  const [gymSections, setGymSections] = useState<{
-    warmUp: GymEx[];
-    mainSet: GymEx[];
-    coolDown: GymEx[];
-  }>({
-    warmUp: [{ ...emptyEx }],
-    mainSet: [{ ...emptyEx }],
-    coolDown: [{ ...emptyEx }],
-  });
-  const [wasPrefilled, setWasPrefilled] = useState(false);
-
-  // Favourites sheet
+  // Favourites
   const [showFavSheet, setShowFavSheet] = useState(false);
   const [pendingFav, setPendingFav] = useState<FavTemplate | null>(null);
   const [favs, setFavs] = useState<FavTemplate[]>([]);
   const [favName, setFavName] = useState("");
 
-  const [headerHeight, setHeaderHeight] = useState(0);
-  const EXTRA_GAP = 8;
-  const listTopOffset = Math.max(0, headerHeight + EXTRA_GAP);
-
+  // Layout helpers
   const WIN_H = Dimensions.get("window").height;
+  const SMALL = WIN_H < 700;
+  const INPUT_H = SMALL ? 42 : 48; // slightly taller inputs
+  const [composerOpen, setComposerOpen] = useState(false); // minimized by default ✅
 
+  // id helpers
+  const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const withId = (x: any) => (x && x.id ? x : { ...x, id: newId() });
+  const stableKey = (it: any, idx: number) => it?.id ?? `${it?.date ?? "na"}-${it?.type ?? "na"}-${idx}`;
+
+  // Icons
+  const TypeIcon = ({ type, color }: { type: string; color: string }) => {
+    const map: Record<string, keyof typeof Ionicons.glyphMap> = {
+      Gym: "barbell",
+      Run: "walk",
+      Walk: "walk",
+      Cycle: "bicycle",
+      Swim: "water",
+      Row: "boat",
+      Yoga: "leaf",
+      Football: "football",
+      HIIT: "flash",
+      Other: "ellipse",
+    } as const;
+    const name = map[type] ?? "ellipse";
+    return <Ionicons name={name as any} size={20} color={color} />;
+  };
+
+  // ——— Effects
   useEffect(() => {
     (async () => {
-      const stored = await getSchedule(); // your existing loader
+      const stored = await getSchedule();
       const migrated = (stored ?? []).map(withId);
       setPlan(migrated);
       if ((stored ?? []).some((x: any) => !x?.id)) {
-        await saveSchedule(migrated); // persist migration once
+        await saveSchedule(migrated);
       }
     })();
   }, []);
@@ -155,39 +201,11 @@ export default function Schedule() {
     setNotes(p.notes || "");
 
     if ((p.type || "Gym") === "Gym") {
-      const norm = (arr: any[] = []): GymEx[] =>
-        arr.map((e) => ({
-          name: e.name || "",
-          setsArr:
-            e.setsArr ??
-            (e.sets?.map?.((s: any) => ({
-              reps: s.reps || "",
-              weight: s.weight || "",
-              completed: !!s.completed,
-            })) || [{ ...emptySet }]),
-        }));
-
-      if (p.sections) {
-        setGymSections({
-          warmUp: norm(p.sections.warmUp),
-          mainSet: norm(p.sections.mainSet),
-          coolDown: norm(p.sections.coolDown),
-        });
-      } else if (p.exercises) {
-        // Back-compat: treat a plain exercises[] as Main Set
-        setGymSections({
-          warmUp: [],
-          mainSet: norm(p.exercises),
-          coolDown: [],
-        });
-      }
+      setOpen(true);
     } else {
-      // Non-gym
       setSeg(p.segments || {});
+      setOpen(true);
     }
-
-    setWasPrefilled(true);
-    setOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [(route as any)?.params?._ts]);
 
@@ -202,20 +220,13 @@ export default function Schedule() {
     })();
   }, []);
 
-  const saveFavs = async (next: FavTemplate[]) => {
-    setFavs(next);
-    await AsyncStorage.setItem(FAV_KEY, JSON.stringify(next));
-  };
-
-  // Import schedule passed in from SmartWorkout ("Import All to Schedule")
+  // Import schedule ("Import All to Schedule")
   useEffect(() => {
-    const imported: ImportedScheduleParam | undefined = (route as any)?.params
-      ?.importedSchedule;
+    const imported: ImportedScheduleParam | undefined = (route as any)?.params?.importedSchedule;
     if (!imported || !Array.isArray(imported) || imported.length === 0) return;
 
-    // Map incoming days to our local plan shape
     const mapped = imported.map((d) => ({
-      date: d.date, // expected yyyy-MM-dd
+      date: d.date,
       type: d.type || "Gym",
       done: false,
       frozen: false,
@@ -228,7 +239,6 @@ export default function Schedule() {
       poolLength: (d as any).poolLength,
     }));
 
-    // Replace duplicates by (date + type), keep last occurrence
     const byKey = new Map<string, any>();
     [...plan, ...mapped].forEach((item) => {
       const key = `${item.date}::${item.customType || item.type}`;
@@ -241,45 +251,38 @@ export default function Schedule() {
     (async () => {
       await persist(merged);
       try {
-        Alert.alert(
-          "Imported",
-          `Added ${mapped.length} day${
-            mapped.length === 1 ? "" : "s"
-          } to your schedule.`
-        );
+        Alert.alert("Imported", `Added ${mapped.length} day${mapped.length === 1 ? "" : "s"} to your schedule.`);
       } catch {}
     })();
 
-    // Clear the param so it won't re-import when navigating back
     try {
       (navigation as any).setParams({ importedSchedule: undefined });
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.importedSchedule]);
 
+  // ——— Derived + persistence
   const persist = async (newPlan: any[]) => {
     setPlan(newPlan);
     await saveSchedule(newPlan);
   };
 
   const filtered = plan.filter(
-    (d) =>
-      (showCompleted ? true : !d.done) &&
-      (sessionType === "All" ? true : d.type === sessionType)
+    (d) => (showCompleted ? true : !d.done) && (sessionType === "All" ? true : d.type === sessionType)
   );
-  const sortedFiltered = [...filtered].sort(
-    (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()
+  const sortedFiltered = useMemo(
+    () => [...filtered].sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime()),
+    [filtered]
   );
 
+  // ——— Actions
   async function completeDay(index: number) {
     const item = plan[index];
     if (!item || item.frozen) return;
 
-    // mark done
     const next = plan.map((d, i) => (i === index ? { ...d, done: true } : d));
     await persist(next);
 
-    // build a history entry from the updated item
     const completed = next[index];
     const historyEntry: any = {
       date: completed.date,
@@ -290,7 +293,6 @@ export default function Schedule() {
     };
 
     if (completed.type === "Gym") {
-      // parse "Name: 3×10" → { name, sets, reps }
       const parse = (s: string) => {
         const [name, rest = ""] = s.split(":");
         const sets = rest.match(/(\d+)×/)?.[1] || "";
@@ -331,9 +333,7 @@ export default function Schedule() {
   }
 
   function toggleFreeze(index: number) {
-    const next = plan.map((d, i) =>
-      i === index ? { ...d, frozen: !d.frozen } : d
-    );
+    const next = plan.map((d, i) => (i === index ? { ...d, frozen: !d.frozen } : d));
     persist(next);
   }
 
@@ -342,72 +342,15 @@ export default function Schedule() {
     persist(next);
   }
 
-  function goToLog(entry?: any) {
-    navigation.navigate("Home", {
-      screen: "Log",
-      params: { entry },
-    });
-  }
-
-  // Robust navigation to Log
-  function safeNavigateToLog(entry: any) {
-    const tryNavigate = (nav: any) => {
-      try {
-        const state = nav?.getState?.();
-        const hasRoute = state?.routeNames?.includes?.("Log");
-        if (hasRoute) {
-          nav.navigate("Log", { entry });
-          return true;
-        }
-      } catch (_) {}
-      return false;
-    };
-
-    if (tryNavigate(navigation)) return;
-
-    let parent = navigation.getParent?.();
-    while (parent) {
-      if (tryNavigate(parent)) return;
-      parent = parent.getParent?.();
-    }
-
-    const root = navigation.getParent?.() || navigation;
-    try {
-      root.navigate("Home", { screen: "Log", params: { entry } });
-    } catch (_) {
-      try {
-        navigation.navigate({
-          name: "Log",
-          params: { entry },
-          merge: true,
-        } as any);
-      } catch (_) {}
-    }
-  }
-
-  function toExercises(list: string[] = []) {
-    return list.map((s) => {
-      const [name, rest = ""] = s.split(":");
-      const reps = rest.match(/×(\d+)/)?.[1] || ""; // 3×10  -> "10"
-      return { name: (name || "").trim(), sets: [{ reps, weight: "" }] };
-    });
-  }
-
-  // Robustly navigate to the "Log" screen anywhere in ancestor navs
   function navigateToLog(params: any) {
-    // If your tabs container is named "MainTabs", use that:
     navigation.dispatch(
       CommonActions.navigate({
-        name: "Home", // <-- your tab navigator route name
-        params: {
-          screen: "Log", // <-- the tab/screen inside MainTabs
-          params, //     { importToLog: ..., _ts: ... }
-        },
+        name: "Home",
+        params: { screen: "Log", params },
       })
     );
   }
 
-  // Map free-text to a Log type when user picked "Other" with a custom label.
   function guessLogType(input?: string) {
     const s = (input || "").trim().toLowerCase();
     const is = (...xs: string[]) => xs.includes(s);
@@ -425,16 +368,21 @@ export default function Schedule() {
     return "Other";
   }
 
-  // Replace your current importToLog with this
+  function toExercises(list: string[] = []) {
+    return list.map((s) => {
+      const [name, rest = ""] = s.split(":");
+      const reps = rest.match(/×(\d+)/)?.[1] || "";
+      return { name: (name || "").trim(), sets: [{ reps, weight: "" }] };
+    });
+  }
+
   function importToLog(day: any, exercise?: string) {
-    // If user entered a custom name when type === "Other", try to map it
     const effectiveType =
       day.type === "Other" ? guessLogType(day.customType) : day.type || "Other";
 
     const importPayload: any = {
       type: effectiveType,
       notes: exercise ? exercise : day.customType ? day.customType : "",
-      // keep the label visible if it remains Other
       customType: effectiveType === "Other" ? day.customType || "" : undefined,
     };
 
@@ -444,14 +392,10 @@ export default function Schedule() {
         { id: "Main Set", title: "Main set", exercises: toExercises(main) },
         { id: "Cool-Down", title: "Cool down", exercises: toExercises(cool) },
       ];
-
-      if (exercise) {
-        importPayload.phases = toPhases([], [exercise], []);
-      } else {
-        importPayload.phases = toPhases(day.warmUp, day.mainSet, day.coolDown);
-      }
+      importPayload.phases = exercise
+        ? toPhases([], [exercise], [])
+        : toPhases(day.warmUp, day.mainSet, day.coolDown);
     } else {
-      // Non-gym: use the exact keys Log expects per type
       switch (effectiveType) {
         case "Run":
         case "Walk":
@@ -462,7 +406,6 @@ export default function Schedule() {
           };
           break;
         case "Swim":
-          // You said Swim should use laps + poolLength + time
           importPayload.segments = {
             laps: day.laps || "",
             poolLength: day.poolLength || "",
@@ -470,23 +413,19 @@ export default function Schedule() {
           };
           break;
         default:
-          // "Other" (or anything custom we can’t map): keep it simple
           importPayload.segments = { duration: day.time || "" };
           if (day.distance) importPayload.segments.distance = day.distance;
           break;
       }
     }
 
-    // Navigate to Log and include a timestamp so the effect always runs
     navigateToLog({ importToLog: importPayload, _ts: Date.now() });
   }
 
+  // ——— Add (7-day limit etc.)
   function handleManualScheduleSubmit() {
     if (sessionType === "All") {
-      Alert.alert(
-        "Pick a Type",
-        "Please choose a specific session type before adding."
-      );
+      Alert.alert("Pick a Type", "Please choose a specific session type before adding.");
       return;
     }
     if (!selectedDate) {
@@ -496,10 +435,7 @@ export default function Schedule() {
     const today = new Date();
     const limit = addDays(today, 7);
     if (isBefore(limit, selectedDate)) {
-      Alert.alert(
-        "Too Far Ahead",
-        "You can only schedule within 7 days from today."
-      );
+      Alert.alert("Too Far Ahead", "You can only schedule within 7 days from today.");
       return;
     }
 
@@ -511,27 +447,22 @@ export default function Schedule() {
       done: false,
       frozen: false,
     };
+
     if (sessionType === "Other") {
       const label = (customType || "").trim();
-      if (label) newDay.customType = label; // keep type: "Other", add a label
+      if (label) newDay.customType = label;
     }
 
     if (sessionType === "Gym") {
       newDay.warmUp = warmUpList
         .filter((e) => e.name.trim() !== "")
-        .map(
-          (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-        );
+        .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`);
       newDay.mainSet = mainSetList
         .filter((e) => e.name.trim() !== "")
-        .map(
-          (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-        );
+        .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`);
       newDay.coolDown = coolDownList
         .filter((e) => e.name.trim() !== "")
-        .map(
-          (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-        );
+        .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`);
     } else if (sessionType === "Swim") {
       newDay.time = duration;
       newDay.laps = laps;
@@ -553,12 +484,11 @@ export default function Schedule() {
     setPoolLength("");
   }
 
-  const weekDates = Array.from({ length: 7 }, (_, i) =>
-    add(startOfWeek(new Date(), { weekStartsOn: 1 }), { days: i })
-  );
-
-  // Dynamic padding to push header below the status bar while letting the card color paint under it
-  const headerPadTop = insets.top + 12;
+  // ——— Favourites helpers
+  const saveFavs = async (next: FavTemplate[]) => {
+    setFavs(next);
+    await AsyncStorage.setItem(FAV_KEY, JSON.stringify(next));
+  };
 
   const makeGymTemplateFromForm = (): FavTemplate => ({
     id: `${Date.now()}`,
@@ -566,19 +496,13 @@ export default function Schedule() {
     type: "Gym",
     warmUp: warmUpList
       .filter((e) => e.name.trim())
-      .map(
-        (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-      ),
+      .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`),
     mainSet: mainSetList
       .filter((e) => e.name.trim())
-      .map(
-        (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-      ),
+      .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`),
     coolDown: coolDownList
       .filter((e) => e.name.trim())
-      .map(
-        (e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`
-      ),
+      .map((e) => `${e.name}${e.sets && e.reps ? `: ${e.sets}×${e.reps}` : ""}`),
     createdAt: new Date().toISOString(),
   });
 
@@ -605,22 +529,15 @@ export default function Schedule() {
   const applyTemplate = (t: FavTemplate) => {
     setSessionType(t.type);
     if (t.type === "Gym") {
-      // map strings back to inputs (best-effort parsing)
       const parse = (s: string) => {
         const [name, rest = ""] = s.split(":");
         const sets = rest.match(/(\d+)×/)?.[1] || "";
         const reps = rest.match(/×(\d+)/)?.[1] || "";
         return { name: name.trim(), sets, reps };
       };
-      setWarmUpList(
-        (t.warmUp || []).map(parse).concat({ name: "", sets: "", reps: "" })
-      );
-      setMainSetList(
-        (t.mainSet || []).map(parse).concat({ name: "", sets: "", reps: "" })
-      );
-      setCoolDownList(
-        (t.coolDown || []).map(parse).concat({ name: "", sets: "", reps: "" })
-      );
+      setWarmUpList((t.warmUp || []).map(parse).concat({ name: "", sets: "", reps: "" }));
+      setMainSetList((t.mainSet || []).map(parse).concat({ name: "", sets: "", reps: "" }));
+      setCoolDownList((t.coolDown || []).map(parse).concat({ name: "", sets: "", reps: "" }));
       setDuration("");
       setDistance("");
       setLaps("");
@@ -642,34 +559,19 @@ export default function Schedule() {
     }
   };
 
-  const removeTemplate = async (id: string) => {
-    const next = favs.filter((f) => f.id !== id);
-    await saveFavs(next);
-  };
-
   const isSimilarTemplate = (a: FavTemplate, b: FavTemplate) => {
     if (a.type !== b.type) return false;
     if (a.type === "Gym") {
       const join = (xs?: string[]) => (xs || []).join("|");
-      return (
-        join(a.mainSet) === join(b.mainSet) &&
-        join(a.warmUp) === join(b.warmUp) &&
-        join(a.coolDown) === join(b.coolDown)
-      );
+      return join(a.mainSet) === join(b.mainSet) && join(a.warmUp) === join(b.warmUp) && join(a.coolDown) === join(b.coolDown);
     }
-    return (
-      (a.time || "") === (b.time || "") &&
-      (a.distance || "") === (b.distance || "")
-    );
+    return (a.time || "") === (b.time || "") && (a.distance || "") === (b.distance || "");
   };
 
   const makeTemplateFromItem = (item: any): FavTemplate => ({
     id: `${Date.now()}`,
-    name: `${item.customType || item.type} – ${format(
-      parseISO(item.date),
-      "dd/MM"
-    )}`,
-    type: (item.type ?? "Other") as TemplateType, // keep union type
+    name: `${item.customType || item.type} – ${format(parseISO(item.date), "dd/MM")}`,
+    type: (item.type ?? "Other") as TemplateType,
     warmUp: item.warmUp,
     mainSet: item.mainSet,
     coolDown: item.coolDown,
@@ -680,68 +582,35 @@ export default function Schedule() {
     createdAt: new Date().toISOString(),
   });
 
-  // Keep near your other fav helpers
-const uniqueName = (proposed: string, all: any[]) => {
-  if (!all.some(f => f.name?.trim() === proposed.trim())) return proposed;
-  let i = 2;
-  let candidate = `${proposed} (${i})`;
-  while (all.some(f => f.name?.trim() === candidate)) {
-    i += 1;
-    candidate = `${proposed} (${i})`;
-  }
-  return candidate;
-};
-
-const toggleFavoriteFromItem = async (item: any) => {
-  const tpl = makeTemplateFromItem(item);  // normalize item → favourite shape
-  const existing = favs.find((f) => isSimilarTemplate(f, tpl));
-
-  if (existing) {
-    // ✅ Already a favourite → remove
-    await removeTemplate(existing.id);
-    Alert.alert("Removed", "Template removed from favourites.");
-    return;
-  }
-
-  // ✅ First time → open naming flow (lets the user edit name)
-  startFavoriteFromItem(item); // uses your existing rename modal flow
-};
-
-
   const itemIsFavorited = (item: any) => {
     const tpl = makeTemplateFromItem(item);
     return favs.some((f) => isSimilarTemplate(f, tpl));
   };
 
+  const removeTemplate = async (id: string) => {
+    const next = favs.filter((f) => f.id !== id);
+    await saveFavs(next);
+  };
+
   const saveFavouriteNow = async (tpl: FavTemplate, nameOverride?: string) => {
     const finalName = (nameOverride ?? tpl.name).trim() || tpl.name;
     const candidate = { ...tpl, name: finalName };
-
     const exists = favs.some((f) => isSimilarTemplate(f, candidate));
     if (exists) {
       Alert.alert("Already saved", "This favourite already exists.");
       return;
     }
-
     await saveFavs([candidate, ...favs].slice(0, 20));
     Alert.alert("Saved", "Template added to your favourites.");
   };
 
   const startFavoriteFromForm = () => {
     if (sessionType === "All") {
-      Alert.alert(
-        "Pick a Type",
-        "Please choose a specific session type before saving."
-      );
+      Alert.alert("Pick a Type", "Please choose a specific session type before saving.");
       return;
     }
-    const tpl =
-      sessionType === "Gym"
-        ? makeGymTemplateFromForm()
-        : makeCardioTemplateFromForm();
-
-    // iOS prompt (Android falls back to half-sheet editor)
-    // @ts-ignore
+    const tpl = sessionType === "Gym" ? makeGymTemplateFromForm() : makeCardioTemplateFromForm();
+    // @ts-ignore (iOS)
     if (Alert.prompt) {
       // @ts-ignore
       Alert.prompt(
@@ -749,10 +618,7 @@ const toggleFavoriteFromItem = async (item: any) => {
         "Give this favourite a name",
         [
           { text: "Cancel", style: "cancel" },
-          {
-            text: "Save",
-            onPress: (text?: string) => saveFavouriteNow(tpl, text),
-          },
+          { text: "Save", onPress: (text?: string) => saveFavouriteNow(tpl, text) },
         ],
         "plain-text",
         tpl.name
@@ -766,8 +632,7 @@ const toggleFavoriteFromItem = async (item: any) => {
 
   const startFavoriteFromItem = (item: any) => {
     const tpl = makeTemplateFromItem(item);
-
-    // @ts-ignore
+    // @ts-ignore (iOS)
     if (Alert.prompt) {
       // @ts-ignore
       Alert.prompt(
@@ -775,10 +640,7 @@ const toggleFavoriteFromItem = async (item: any) => {
         "Give this favourite a name",
         [
           { text: "Cancel", style: "cancel" },
-          {
-            text: "Save",
-            onPress: (text?: string) => saveFavouriteNow(tpl, text),
-          },
+          { text: "Save", onPress: (text?: string) => saveFavouriteNow(tpl, text) },
         ],
         "plain-text",
         tpl.name
@@ -807,1125 +669,478 @@ const toggleFavoriteFromItem = async (item: any) => {
     setFavName("");
   };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.card }}>
-      {/* Fixed Header */}
-      <View
-        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+  // ——— UI atoms
+  const Chip: React.FC<{ label: string; active?: boolean; onPress?: () => void }> = ({ label, active, onPress }) => (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{
+        backgroundColor: active ? colors.primary : colors.inputBackground,
+        paddingVertical: SMALL ? 7 : 9,
+        paddingHorizontal: SMALL ? 12 : 14,
+        borderRadius: 999,
+        marginRight: 8,
+        borderWidth: 1,
+        borderColor: active ? colors.primary : colors.border,
+      }}
+    >
+      <Text
         style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 10,
-          backgroundColor: colors.card,
-          paddingTop: headerPadTop,
-          paddingBottom: 0,
-          paddingHorizontal: 12,
+          color: active ? (colors.onPrimary || getContrastText(colors.primary)) : colors.textSecondary,
+          fontSize: SMALL ? 12 : 13,
+          fontWeight: "700",
         }}
       >
-        {/* Background underlay (card color) that paints to the very top */}
-        <View
-          pointerEvents="none"
-          style={{
-            position: "absolute",
-            top: 0, // paint from very top of the screen
-            left: 0,
-            right: 0,
-            bottom: 0, // line up exactly with the list container
-            backgroundColor: colors.card,
-          }}
-        />
-        <Text
-          style={[
-            typography.h2,
-            { color: colors.textPrimary, marginBottom: 8, fontSize: 28 },
-          ]}
-        >
-          Schedule
-        </Text>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
 
-        {/* Create Session */}
-        <View
-          style={{
-            backgroundColor: colors.card,
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 8,
-            minHeight: 200,
-            justifyContent: "flex-start",
-            ...cardShadow,
-          }}
-        >
-          <Text
-            style={[
-              typography.h3,
-              { color: colors.textPrimary, fontSize: 18, marginBottom: 10 },
-            ]}
-          >
-            Create a Session
-          </Text>
-          <Text
-            style={{
-              color: colors.textSecondary,
-              fontSize: 12,
-              marginBottom: 8,
-            }}
-          >
-            Schedule up to 7 days in advance
-          </Text>
+  const CTA: React.FC<{ title: string; tone?: "accent" | "success" | "error" | "primary"; onPress?: () => void }> = ({ title, tone = "primary", onPress }) => {
+    const tones: any = {
+      primary: { bg: colors.primary + "22", fg: colors.primary },
+      accent: { bg: colors.accent + "22", fg: colors.accent },
+      success: { bg: colors.success + "22", fg: colors.success },
+      error: { bg: colors.error + "22", fg: colors.error },
+    };
+    const t = tones[tone] || tones.primary;
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        style={{
+          paddingVertical: 12,
+          paddingHorizontal: 18,
+          borderRadius: 999,
+          backgroundColor: t.bg,
+          alignSelf: "flex-start",
+          ...shadow("sm"),
+        }}
+      >
+        <Text style={{ color: t.fg, fontWeight: "700", fontSize: 16 }}>{title}</Text>
+      </TouchableOpacity>
+    );
+  };
 
-          {/* Date Picker */}
-          <FlatList
-            horizontal
-            data={weekDates}
-            keyExtractor={(item) => item.toISOString()}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ marginBottom: 8 }}
-            renderItem={({ item }) => {
-              const isSelected = selectedDate && isSameDay(item, selectedDate);
-              const isToday = isSameDay(item, new Date());
-              const isGreyedOut = !isToday && !isSelected;
-              return (
-                <TouchableOpacity
-                  onPress={() => setSelectedDate(item)}
-                  style={{
-                    paddingVertical: 8,
-                    paddingHorizontal: 10,
-                    marginRight: 8,
-                    borderRadius: 10,
-                    borderWidth: 1,
-                    borderColor: isSelected ? colors.primary : colors.border,
-                    backgroundColor: isSelected
-                      ? colors.primary
-                      : colors.inputBackground,
-                    alignItems: "center",
-                    ...cardShadow,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: isSelected
-                        ? "#FFF"
-                        : isGreyedOut
-                        ? "#A0A0A0"
-                        : colors.textPrimary,
-                      fontWeight: isSelected ? "700" : "500",
-                      fontSize: 14,
-                    }}
-                  >
-                    {format(item, "EEE")}
-                  </Text>
-                  <Text
-                    style={{
-                      color: isSelected
-                        ? "#FFF"
-                        : isGreyedOut
-                        ? "#A0A0A0"
-                        : colors.textSecondary,
-                      fontSize: 12,
-                    }}
-                  >
-                    {format(item, "dd MMM")}
-                  </Text>
-                </TouchableOpacity>
-              );
-            }}
-          />
+  const Tag: React.FC<{ label: string; bg: string; fg: string }> = ({ label, bg, fg }) => (
+    <View style={{ marginLeft: 8, backgroundColor: bg, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 2 }}>
+      <Text style={{ color: fg, fontSize: 11, fontWeight: "700" }}>{label}</Text>
+    </View>
+  );
 
-          {/* Session Type */}
-          <Text
-            style={{
-              color: colors.textSecondary,
-              fontSize: 12,
-              marginTop: 10,
-              marginBottom: 10,
-            }}
-          >
-            Type of session
-          </Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingRight: 8 }}
-            style={{ marginBottom: 8 }}
-          >
-            {["All", "Gym", "Run", "Swim", "Cycle", "Other"].map((type) => (
-              <TouchableOpacity
-                key={type}
-                onPress={() => setSessionType(type)}
-                style={{
-                  backgroundColor:
-                    sessionType === type
-                      ? colors.surface
-                      : colors.inputBackground,
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  borderRadius: 16,
-                  marginRight: 8,
-                  borderWidth: 1,
-                  borderColor:
-                    sessionType === type ? colors.primary : colors.border,
-                }}
-              >
-                <Text
-                  style={{
-                    color:
-                      sessionType === type
-                        ? colors.textPrimary
-                        : colors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: "700",
-                  }}
-                >
-                  {type}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+  const inputStyle = (h: number) => ({
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.inputBackground,
+    color: colors.textPrimary,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    height: h,
+    borderRadius: RADIUS,
+  });
 
-          {/* Distance + Duration for non-Gym */}
-          {/* Distance + Duration for non-Gym */}
-          {sessionType !== "Gym" && sessionType !== "All" && (
-            <View style={{ marginBottom: 8 }}>
-              {/* Only for "Other": optional custom label */}
-              {sessionType === "Other" && (
-                <>
-                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
-                    Activity name (optional)
-                  </Text>
-                  <TextInput
-                    value={customType}
-                    onChangeText={setCustomType}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. Pickleball, Hiking, Pilates..."
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </>
-              )}
-
-              {sessionType === "Swim" ? (
-                <>
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.textSecondary,
-                      marginTop: 8,
-                    }}
-                  >
-                    Laps
-                  </Text>
-                  <TextInput
-                    value={laps}
-                    keyboardType="numeric"
-                    onChangeText={setLaps}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. 20"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.textSecondary,
-                      marginTop: 8,
-                    }}
-                  >
-                    Pool length (m)
-                  </Text>
-                  <TextInput
-                    value={poolLength}
-                    keyboardType="numeric"
-                    onChangeText={setPoolLength}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. 25"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.textSecondary,
-                      marginTop: 8,
-                    }}
-                  >
-                    Time (min)
-                  </Text>
-                  <TextInput
-                    value={duration}
-                    keyboardType="numeric"
-                    onChangeText={setDuration}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. 45"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </>
-              ) : (
-                <>
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      color: colors.textSecondary,
-                      marginTop: 8,
-                    }}
-                  >
-                    Duration (min)
-                  </Text>
-                  <TextInput
-                    value={duration}
-                    keyboardType="numeric"
-                    onChangeText={setDuration}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. 30"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-
-                  <Text
-                    style={{
-                      fontSize: 12,
-                      marginTop: 5,
-                      color: colors.textSecondary,
-                    }}
-                  >
-                    Distance (km)
-                  </Text>
-                  <TextInput
-                    value={distance}
-                    keyboardType="numeric"
-                    onChangeText={setDistance}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: colors.border,
-                      padding: 8,
-                      borderRadius: 7,
-                      marginTop: 2,
-                      color: colors.textPrimary,
-                    }}
-                    placeholder="e.g. 5.0"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </>
-              )}
-            </View>
-          )}
-
-          {/* Gym Inputs */}
-          {sessionType === "Gym" && (
-            <ScrollView
-              style={{ maxHeight: 230, marginVertical: 4 }}
-              contentContainerStyle={{ paddingBottom: 6 }}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode="on-drag"
-              showsVerticalScrollIndicator={false}
-            >
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontSize: 12,
-                  marginTop: 6,
-                }}
-              >
-                Warm-Up
-              </Text>
-              {warmUpList.map((exercise, idx) => (
-                <View
-                  key={`warm-${idx}`}
-                  style={{ marginTop: 2, flexDirection: "row", gap: 4 }}
-                >
-                  <View style={{ flex: 2 }}>
-                    <TextInput
-                      value={exercise.name}
-                      placeholder="Exercise"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...warmUpList];
-                        updated[idx] = { ...updated[idx], name: text };
-                        setWarmUpList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.sets}
-                      placeholder="Sets"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...warmUpList];
-                        updated[idx] = { ...updated[idx], sets: text };
-                        setWarmUpList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.reps}
-                      placeholder="Reps"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...warmUpList];
-                        updated[idx] = { ...updated[idx], reps: text };
-                        setWarmUpList(updated);
-                      }}
-                    />
-                  </View>
-                  {warmUpList.length > 1 && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        setWarmUpList(warmUpList.filter((_, i) => i !== idx))
-                      }
-                      style={{
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginLeft: 2,
-                      }}
-                    >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ))}
-              <TouchableOpacity
-                onPress={() =>
-                  setWarmUpList([
-                    ...warmUpList,
-                    { name: "", sets: "", reps: "" },
-                  ])
-                }
-              >
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontWeight: "600",
-                    marginVertical: 4,
-                    fontSize: 14,
-                  }}
-                >
-                  Add Warm-Up
-                </Text>
-              </TouchableOpacity>
-
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontSize: 12,
-                  marginTop: 6,
-                }}
-              >
-                Main Set
-              </Text>
-              {mainSetList.map((exercise, idx) => (
-                <View
-                  key={`main-${idx}`}
-                  style={{ marginTop: 2, flexDirection: "row", gap: 4 }}
-                >
-                  <View style={{ flex: 2 }}>
-                    <TextInput
-                      value={exercise.name}
-                      placeholder="Exercise"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...mainSetList];
-                        updated[idx] = { ...updated[idx], name: text };
-                        setMainSetList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.sets}
-                      placeholder="Sets"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...mainSetList];
-                        updated[idx] = { ...updated[idx], sets: text };
-                        setMainSetList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.reps}
-                      placeholder="Reps"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...mainSetList];
-                        updated[idx] = { ...updated[idx], reps: text };
-                        setMainSetList(updated);
-                      }}
-                    />
-                  </View>
-                  {mainSetList.length > 1 && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        setMainSetList(mainSetList.filter((_, i) => i !== idx))
-                      }
-                      style={{
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginLeft: 2,
-                      }}
-                    >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ))}
-              <TouchableOpacity
-                onPress={() =>
-                  setMainSetList([
-                    ...mainSetList,
-                    { name: "", sets: "", reps: "" },
-                  ])
-                }
-              >
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontWeight: "600",
-                    marginVertical: 4,
-                    fontSize: 14,
-                  }}
-                >
-                  Add Main Set
-                </Text>
-              </TouchableOpacity>
-
-              <Text
-                style={{
-                  color: colors.textSecondary,
-                  fontSize: 12,
-                  marginTop: 6,
-                }}
-              >
-                Cool-Down
-              </Text>
-              {coolDownList.map((exercise, idx) => (
-                <View
-                  key={`cool-${idx}`}
-                  style={{ marginTop: 2, flexDirection: "row", gap: 4 }}
-                >
-                  <View style={{ flex: 2 }}>
-                    <TextInput
-                      value={exercise.name}
-                      placeholder="Exercise"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...coolDownList];
-                        updated[idx] = { ...updated[idx], name: text };
-                        setCoolDownList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.sets}
-                      placeholder="Sets"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...coolDownList];
-                        updated[idx] = { ...updated[idx], sets: text };
-                        setCoolDownList(updated);
-                      }}
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      value={exercise.reps}
-                      placeholder="Reps"
-                      keyboardType="numeric"
-                      placeholderTextColor={colors.textSecondary}
-                      style={{
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                        padding: 8,
-                        borderRadius: 7,
-                        fontSize: 14,
-                        color: colors.textPrimary,
-                        marginBottom: 1,
-                      }}
-                      onChangeText={(text) => {
-                        const updated = [...coolDownList];
-                        updated[idx] = { ...updated[idx], reps: text };
-                        setCoolDownList(updated);
-                      }}
-                    />
-                  </View>
-                  {coolDownList.length > 1 && (
-                    <TouchableOpacity
-                      onPress={() =>
-                        setCoolDownList(
-                          coolDownList.filter((_, i) => i !== idx)
-                        )
-                      }
-                      style={{
-                        justifyContent: "center",
-                        alignItems: "center",
-                        marginLeft: 2,
-                      }}
-                    >
-                      <Text style={{ color: colors.error, fontSize: 12 }}>
-                        Remove
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ))}
-              <TouchableOpacity
-                onPress={() =>
-                  setCoolDownList([
-                    ...coolDownList,
-                    { name: "", sets: "", reps: "" },
-                  ])
-                }
-              >
-                <Text
-                  style={{
-                    color: colors.accent,
-                    fontWeight: "600",
-                    marginVertical: 4,
-                    fontSize: 14,
-                  }}
-                >
-                  Add Cool-Down
-                </Text>
-              </TouchableOpacity>
-            </ScrollView>
-          )}
-
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 5,
-            }}
-          >
-            {/* Submit */}
-            <TouchableOpacity
-              onPress={handleManualScheduleSubmit}
-              style={{
-                marginTop: 12,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 10,
-                backgroundColor: colors.success + "22",
-                alignSelf: "flex-start",
-                ...cardShadow,
+  const Phase: React.FC<{ title: string; list: any[]; setList: (v: any[]) => void }> = ({ title, list, setList }) => (
+    <View style={{ marginBottom: 8 }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 4 }}>{title}</Text>
+      {list.map((exercise, idx) => (
+        <View key={`${title}-${idx}`} style={{ flexDirection: "row", gap: 6, marginBottom: 6 }}>
+          <View style={{ flex: 2 }}>
+            <TextInput
+              value={exercise.name}
+              onChangeText={(t) => {
+                const u = [...list];
+                u[idx] = { ...u[idx], name: t };
+                setList(u);
               }}
-            >
-              <Text
-                style={{
-                  color: colors.success,
-                  fontWeight: "600",
-                  fontSize: 16,
-                }}
-              >
-                Add to Schedule
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => {
-                // open sheet to browse favourites or save current form as a new favourite
-                setPendingFav(null); // browsing mode by default
-                setFavName("");
-                setShowFavSheet(true);
-              }}
-              style={{
-                marginTop: 12,
-                //marginRight: 8,
-                paddingVertical: 10,
-                paddingHorizontal: 14,
-                borderRadius: 10,
-                backgroundColor: colors.accent + "22",
-                alignSelf: "flex-start",
-                ...cardShadow,
-              }}
-            >
-              <Text
-                style={{
-                  color: colors.accent,
-                  fontWeight: "600",
-                  fontSize: 16,
-                }}
-              >
-                Favourites ⭐
-              </Text>
-            </TouchableOpacity>
+              placeholder="Exercise"
+              placeholderTextColor={colors.textSecondary}
+              style={inputStyle(INPUT_H)}
+            />
           </View>
-
-          {/* Upcoming Heading */}
-          {/* <Text
-            style={[
-              typography.h3,
-              {
-                color: colors.textPrimary,
-                marginTop: 14,
-                paddingBottom: 6,
-                paddingHorizontal: 2,
-                fontSize: 18,
-                fontWeight: "800",
-              },
-            ]}
-          >
-            Upcoming Schedule
-          </Text> */}
-        </View>
-      </View>
-
-      {/* List below header */}
-      <View
-        style={{
-          flex: 1,
-          paddingTop: listTopOffset,
-          backgroundColor: colors.card,
-          marginTop: 0,
-        }}
-      >
-        <Text
-          style={[
-            typography.h3,
-            {
-              color: colors.textPrimary,
-              marginTop: 5,
-              marginBottom: 10,
-              paddingBottom: 6,
-              paddingHorizontal: 15,
-              fontSize: 18,
-              fontWeight: "800",
-            },
-          ]}
-        >
-          Upcoming Schedule
-        </Text>
-        <FlatList
-          style={{ backgroundColor: colors.card }}
-          data={sortedFiltered}
-          keyExtractor={(item, index) => String(stableKey(item, index))}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingBottom: insets.bottom + 140,
-            paddingTop: 0,
-          }}
-          ListFooterComponent={<View style={{ height: insets.bottom + 24 }} />}
-          renderItem={({ item, index }) => (
-            <View
-              // key={`${item.date}-${index}`}
-              style={{
-                backgroundColor: colors.card,
-                borderRadius: 12,
-                padding: 16,
-                marginHorizontal: 12,
-                marginBottom: 12,
-                opacity: item.done ? 0.5 : 1,
-                ...cardShadow,
+          <View style={{ flex: 1 }}>
+            <TextInput
+              value={exercise.sets}
+              onChangeText={(t) => {
+                const u = [...list];
+                u[idx] = { ...u[idx], sets: t };
+                setList(u);
               }}
-            >
-              {item.frozen && (
-                <Text
-                  style={{
-                    fontSize: 12,
-                    fontWeight: "500",
-                    color: colors.warning,
-                    marginBottom: 2,
-                    marginLeft: 2,
+              keyboardType="numeric"
+              placeholder="Sets"
+              placeholderTextColor={colors.textSecondary}
+              style={inputStyle(INPUT_H)}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <TextInput
+              value={exercise.reps}
+              onChangeText={(t) => {
+                const u = [...list];
+                u[idx] = { ...u[idx], reps: t };
+                setList(u);
+              }}
+              keyboardType="numeric"
+              placeholder="Reps"
+              placeholderTextColor={colors.textSecondary}
+              style={inputStyle(INPUT_H)}
+            />
+          </View>
+          {list.length > 1 && (
+            <TouchableOpacity onPress={() => setList(list.filter((_, i) => i !== idx))} style={{ justifyContent: "center" }}>
+              <Text style={{ color: colors.error, fontSize: 12 }}>Remove</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      ))}
+      <TouchableOpacity onPress={() => setList([...list, { name: "", sets: "", reps: "" }])}>
+        <Text style={{ color: colors.accent, fontWeight: "600", fontSize: 14 }}>Add {title}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // ——— Derived UI
+  const weekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => add(startOfWeek(new Date(), { weekStartsOn: 1 }), { days: i })),
+    []
+  );
+
+  // ——— Render
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={insets.top + 56} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ padding: 12 }} keyboardShouldPersistTaps="handled">
+          <LinearGradient
+            colors={isDark ? gradients.blackGoldSubtle : gradients.paperSheen}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{ borderRadius: CARD_RADIUS, marginBottom: 12, padding: 10 }}
+          >
+            <View style={{ backgroundColor: colors.surface, borderRadius: CARD_RADIUS, borderWidth: 1, borderColor: colors.border, padding: 14, ...shadow("md") }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <View>
+                  <Text style={[typography.h2, { color: colors.textPrimary }]}>Schedule</Text>
+                  <Text style={{ color: colors.textSecondary, marginTop: 2, fontSize: 12 }}>Plan your week at a glance</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                    setComposerOpen((s) => !s);
                   }}
                 >
-                  Frozen
-                </Text>
-              )}
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  marginBottom: 5,
-                }}
-              >
-                <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                  {format(parseISO(item.date), "dd/MM/yy")}
-                </Text>
-                <View style={{ flexDirection: "row" }}>
-                  {!item.done && (
-                    <TouchableOpacity
-                      onPress={() => {
-                        if (!item.frozen) completeDay(index);
-                      }}
-                    >
-                      <Text
-                        style={{
-                          fontWeight: "600",
-                          color: item.frozen
-                            ? colors.textSecondary
-                            : colors.success,
-                          marginRight: 8,
-                          opacity: item.frozen ? 0.5 : 1,
-                          fontSize: 15,
-                        }}
-                      >
-                        Complete
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity onPress={() => importToLog(item)}>
-                    <Text
-                      style={{
-                        fontWeight: "600",
-                        color: colors.accent,
-                        marginRight: 8,
-                        fontSize: 15,
-                      }}
-                    >
-                      Import
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <Text style={{ color: colors.textSecondary, marginRight: 6, fontWeight: "700" }}>
+                      {composerOpen ? "Hide" : "Quick Add"}
                     </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => removeDay(index)}>
-                    <Text
-                      style={{
-                        fontWeight: "600",
-                        color: colors.error,
-                        fontSize: 15,
-                      }}
-                    >
-                      Remove
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    <MaterialIcons name={composerOpen ? "expand-less" : "expand-more"} size={20} color={colors.textSecondary} />
+                  </View>
+                </TouchableOpacity>
               </View>
 
-              {item.type === "Gym" ? (
-                ["warmUp", "mainSet", "coolDown"].map((sec) => (
-                  <View key={sec} style={{ marginTop: 5 }}>
-                    <Text
-                      style={{
-                        fontWeight: "600",
-                        marginBottom: 2,
-                        color: colors.textSecondary,
-                        fontSize: 14,
-                      }}
-                    >
-                      {sec === "warmUp"
-                        ? "Warm-Up"
-                        : sec === "mainSet"
-                        ? "Main Set"
-                        : "Cool-Down"}
-                    </Text>
-                    {(item[sec] || []).map((entry: string, j: number) => (
-                      <View
-                        key={j}
-                        style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
-                      >
-                        <Text
+              <View style={{ height: 1, backgroundColor: colors.border, marginVertical: 10 }} />
+
+              {/* Filters row */}
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: composerOpen ? 12 : 2, paddingHorizontal: 2 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 8 }}>
+                  {["All", "Gym", "Run", "Swim", "Cycle", "Other"].map((t) => (
+                    <Chip key={t} label={t} active={sessionType === t} onPress={() => setSessionType(t)} />
+                  ))}
+                </ScrollView>
+                <TouchableOpacity onPress={() => setShowCompleted((s) => !s)}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: "700" }}>
+                    {showCompleted ? "Hide Completed" : "Show Completed"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Collapsible composer */}
+              {composerOpen && (
+                <View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 6 }}>Date</Text>
+                  <FlatList
+                    horizontal
+                    data={weekDates}
+                    keyExtractor={(d) => d.toISOString()}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ paddingVertical: 2 }}
+                    renderItem={({ item }) => {
+                      const isSelected = selectedDate && isSameDay(item, selectedDate);
+                      return (
+                        <TouchableOpacity
+                          onPress={() => setSelectedDate(item)}
                           style={{
-                            flex: 1,
-                            marginLeft: 2,
-                            marginBottom: 1,
-                            color: colors.textPrimary,
-                            fontSize: 14,
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                            marginRight: 8,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: isSelected ? colors.primary : colors.border,
+                            backgroundColor: isSelected ? colors.primary : colors.inputBackground,
+                            alignItems: "center",
+                            minWidth: 64,
+                            ...shadow("sm"),
                           }}
                         >
-                          • {entry}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
-                ))
-              ) : (
-                <View style={{ marginTop: 5 }}>
-                  <Text
-                    style={{
-                      fontWeight: "600",
-                      marginBottom: 2,
-                      color: colors.textSecondary,
-                      fontSize: 14,
+                          <Text style={{ color: isSelected ? (colors.onPrimary || getContrastText(colors.primary)) : colors.textPrimary, fontWeight: isSelected ? "800" : "700", fontSize: 13 }}>
+                            {format(item, "EEE")}
+                          </Text>
+                          <Text style={{ color: isSelected ? (colors.onPrimary || getContrastText(colors.primary)) : colors.textSecondary, fontSize: 11 }}>
+                            {format(item, "dd MMM")}
+                          </Text>
+                        </TouchableOpacity>
+                      );
                     }}
-                  >
-                    {item.customType || item.type} Summary
-                  </Text>
-                  {item.type === "Swim" ? (
-                    <>
-                      <Text
-                        style={{
-                          color: colors.textPrimary,
-                          marginBottom: 2,
-                          fontSize: 14,
-                        }}
-                      >
-                        • Laps: {item.laps || "-"}
-                      </Text>
-                      <Text
-                        style={{
-                          color: colors.textPrimary,
-                          marginBottom: 2,
-                          fontSize: 14,
-                        }}
-                      >
-                        • Pool length: {item.poolLength || "-"} m
-                      </Text>
-                      <Text style={{ color: colors.textPrimary, fontSize: 14 }}>
-                        • Time: {item.time || "-"} min
-                      </Text>
-                    </>
-                  ) : (
-                    <>
-                      <Text
-                        style={{
-                          color: colors.textPrimary,
-                          marginBottom: 2,
-                          fontSize: 14,
-                        }}
-                      >
-                        • Time: {item.time || "-"} min
-                      </Text>
-                      <Text style={{ color: colors.textPrimary, fontSize: 14 }}>
-                        • Distance: {item.distance || "-"} km
-                      </Text>
-                    </>
+                  />
+
+                  {sessionType !== "Gym" && sessionType !== "All" && (
+                    <View style={{ marginTop: SECTION_GAP }}>
+                      {sessionType === "Other" && (
+                        <View style={{ marginBottom: 8 }}>
+                          <Text style={{ fontSize: 12, color: colors.textSecondary }}>Activity name (optional)</Text>
+                          <TextInput
+                            value={customType}
+                            onChangeText={setCustomType}
+                            placeholder="e.g. Pickleball, Hiking, Pilates..."
+                            placeholderTextColor={colors.textSecondary}
+                            style={inputStyle(INPUT_H)}
+                          />
+                        </View>
+                      )}
+
+                      {sessionType === "Swim" ? (
+                        <View>
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>Laps</Text>
+                          <TextInput value={laps} onChangeText={setLaps} keyboardType="numeric" placeholder="e.g. 20" placeholderTextColor={colors.textSecondary} style={inputStyle(INPUT_H)} />
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>Pool length (m)</Text>
+                          <TextInput value={poolLength} onChangeText={setPoolLength} keyboardType="numeric" placeholder="e.g. 25" placeholderTextColor={colors.textSecondary} style={inputStyle(INPUT_H)} />
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>Time (min)</Text>
+                          <TextInput value={duration} onChangeText={setDuration} keyboardType="numeric" placeholder="e.g. 45" placeholderTextColor={colors.textSecondary} style={inputStyle(INPUT_H)} />
+                        </View>
+                      ) : (
+                        <View>
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>Duration (min)</Text>
+                          <TextInput value={duration} onChangeText={setDuration} keyboardType="numeric" placeholder="e.g. 30" placeholderTextColor={colors.textSecondary} style={inputStyle(INPUT_H)} />
+                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>Distance (km)</Text>
+                          <TextInput value={distance} onChangeText={setDistance} keyboardType="numeric" placeholder="e.g. 5.0" placeholderTextColor={colors.textSecondary} style={inputStyle(INPUT_H)} />
+                        </View>
+                      )}
+                    </View>
                   )}
+
+                  {sessionType === "Gym" && (
+                    <View style={{ marginTop: SECTION_GAP }}>
+                      <Phase title="Warm-Up" list={warmUpList} setList={setWarmUpList} />
+                      <Phase title="Main Set" list={mainSetList} setList={setMainSetList} />
+                      <Phase title="Cool-Down" list={coolDownList} setList={setCoolDownList} />
+                    </View>
+                  )}
+
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
+                    <CTA title="Add to Schedule" tone="success" onPress={handleManualScheduleSubmit} />
+                    <CTA
+                      title="Favourites"
+                      tone="accent"
+                      onPress={() => {
+                        setPendingFav(null);
+                        setFavName("");
+                        setShowFavSheet(true);
+                      }}
+                    />
+                  </View>
                 </View>
               )}
-              <TouchableOpacity
-                onPress={() => toggleFavoriteFromItem(item)}
-                onLongPress={() => startFavoriteFromItem(item)}
+            </View>
+          </LinearGradient>
+
+          <Text style={[typography.h3, { color: colors.textPrimary, marginTop: 8, marginBottom: 10, paddingHorizontal: 4, fontSize: 18, fontWeight: "800" }]}>
+            Upcoming
+          </Text>
+
+          {sortedFiltered.length === 0 ? (
+            <View style={{ alignItems: "center", paddingVertical: 36 }}>
+              <Ionicons name="calendar-outline" size={22} color={colors.textSecondary} />
+              <Text style={{ color: colors.textSecondary, marginTop: 8 }}>Nothing scheduled yet. Add your first session above.</Text>
+            </View>
+          ) : (
+            sortedFiltered.map((item, index) => (
+              <View
+                key={stableKey(item, index)}
                 style={{
-                  position: "absolute",
-                  top: 55,
-                  right: 15,
-                  padding: 6,
-                  borderRadius: 16,
-                  backgroundColor: colors.inputBackground,
+                  backgroundColor: colors.surface,
+                  borderRadius: CARD_RADIUS,
+                  padding: 16,
+                  marginBottom: 12,
                   borderWidth: 1,
                   borderColor: colors.border,
+                  ...shadow("sm"),
                 }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <MaterialIcons
-                  name={itemIsFavorited(item) ? "star" : "star-border"}
-                  size={18}
-                  color={
-                    itemIsFavorited(item) ? colors.accent : colors.textSecondary
-                  }
-                />
-              </TouchableOpacity>
-            </View>
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                  <View
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 14,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: colors.inputBackground,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      marginRight: 8,
+                    }}
+                  >
+                    <TypeIcon type={item.customType || item.type} color={colors.textPrimary} />
+                  </View>
+                  <Text style={{ color: colors.textPrimary, fontWeight: "700" }}>{item.customType || item.type}</Text>
+                  {isSameDay(parseISO(item.date), new Date()) && (
+                    <Tag label="Today" bg={colors.primary + "22"} fg={colors.primary} />
+                  )}
+                  {item.frozen && <Tag label="Frozen" bg={colors.warning + "22"} fg={colors.warning} />}
+                  {item.done && <Tag label="Done" bg={colors.success + "22"} fg={colors.success} />}
+                </View>
+
+                <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+                  <Text style={{ fontSize: 14, color: colors.textSecondary }}>{format(parseISO(item.date), "dd/MM/yy")}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    {!item.done && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (!item.frozen) completeDay(index);
+                        }}
+                        style={{ marginRight: 10 }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <MaterialIcons name="check-circle" size={18} color={item.frozen ? colors.textSecondary : colors.success} />
+                          <Text
+                            style={{
+                              marginLeft: 6,
+                              fontWeight: "700",
+                              color: item.frozen ? colors.textSecondary : colors.success,
+                              fontSize: 14,
+                            }}
+                          >
+                            Complete
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={() => importToLog(item)} style={{ marginRight: 10 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center" }}>
+                        <MaterialIcons name="file-download" size={18} color={colors.accent} />
+                        <Text style={{ marginLeft: 6, fontWeight: "700", color: colors.accent, fontSize: 14 }}>Import</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeDay(index)}>
+                      <View style={{ flexDirection: "row", alignItems: "center" }}>
+                        <MaterialIcons name="delete" size={18} color={colors.error} />
+                        <Text style={{ marginLeft: 6, fontWeight: "700", color: colors.error, fontSize: 14 }}>Remove</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <View style={{ height: 1, backgroundColor: colors.border, opacity: 0.6, marginBottom: 8 }} />
+
+                {item.type === "Gym" ? (
+                  ["warmUp", "mainSet", "coolDown"].map((sec) => (
+                    <View key={sec} style={{ marginTop: 4 }}>
+                      <Text style={{ fontWeight: "600", marginBottom: 2, color: colors.textSecondary, fontSize: 14 }}>
+                        {sec === "warmUp" ? "Warm-Up" : sec === "mainSet" ? "Main Set" : "Cool-Down"}
+                      </Text>
+                      {(item[sec] || []).map((entry: string, j: number) => (
+                        <Text key={j} style={{ color: colors.textPrimary, fontSize: 14, marginLeft: 4 }}>
+                          • {entry}
+                        </Text>
+                      ))}
+                    </View>
+                  ))
+                ) : (
+                  <View style={{ marginTop: 4 }}>
+                    <Text style={{ fontWeight: "600", marginBottom: 2, color: colors.textSecondary, fontSize: 14 }}>
+                      {item.customType || item.type} Summary
+                    </Text>
+                    {item.type === "Swim" ? (
+                      <>
+                        <Text style={{ color: colors.textPrimary, fontSize: 14 }}>• Laps: {item.laps || "-"}</Text>
+                        <Text style={{ color: colors.textPrimary, fontSize: 14 }}>• Pool length: {item.poolLength || "-"} m</Text>
+                        <Text style={{ color: colors.textPrimary, fontSize: 14 }}>• Time: {item.time || "-"} min</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={{ color: colors.textPrimary, fontSize: 14 }}>• Time: {item.time || "-"} min</Text>
+                        <Text style={{ color: colors.textPrimary, fontSize: 14 }}>• Distance: {item.distance || "-"} km</Text>
+                      </>
+                    )}
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  onPress={() => {
+                    const tpl = makeTemplateFromItem(item);
+                    const existing = favs.find((f) => isSimilarTemplate(f, tpl));
+                    if (existing) {
+                      removeTemplate(existing.id);
+                      Alert.alert("Removed", "Template removed from favourites.");
+                    } else {
+                      startFavoriteFromItem(item);
+                    }
+                  }}
+                  onLongPress={() => startFavoriteFromItem(item)}
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    right: 12,
+                    padding: 8,
+                    borderRadius: 20,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    ...shadow("sm"),
+                  }}
+                >
+                  <MaterialIcons
+                    name={itemIsFavorited(item) ? "star" : "star-border"}
+                    size={18}
+                    color={itemIsFavorited(item) ? colors.accent : colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+            ))
           )}
-        />
-      </View>
-      <Modal
-        visible={showFavSheet}
-        transparent
-        animationType="fade"
-        onRequestClose={cancelFavEdit}
-      >
-        {/* Backdrop */}
-        <Pressable
-          onPress={cancelFavEdit}
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "flex-end",
-          }}
-        >
-          {/* Stop propagation so taps inside content don't close */}
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {/* Favourites sheet */}
+      <Modal visible={showFavSheet} transparent animationType="fade" onRequestClose={cancelFavEdit}>
+        <Pressable onPress={cancelFavEdit} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" }}>
           <Pressable
             onPress={() => {}}
             style={{
-              // height: Math.min(540, WIN_H * 0.5), // half-height modal
-              backgroundColor: colors.card,
-              // borderTopLeftRadius: 16,
-              // borderTopRightRadius: 16,
-              left: 0,
-              right: 0,
-              bottom: 0,
+              backgroundColor: colors.surface,
+              borderTopLeftRadius: 16,
+              borderTopRightRadius: 16,
               borderTopWidth: 1,
               borderColor: colors.border,
               paddingBottom: insets.bottom + 8,
-              paddingTop: 8,
-              ...cardShadow,
+              paddingTop: 12,
+              maxHeight: Math.min(WIN_H * 0.8, 620),
             }}
           >
-            {/* Grab handle */}
             <View style={{ alignItems: "center", marginBottom: 6 }}>
-              <View
-                style={{
-                  width: 36,
-                  height: 4,
-                  borderRadius: 2,
-                  backgroundColor: colors.border,
-                }}
-              />
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
             </View>
-
-            {/* Title row */}
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                paddingHorizontal: 12,
-              }}
-            >
-              <Text
-                style={{
-                  color: colors.textPrimary,
-                  fontWeight: "800",
-                  fontSize: 16,
-                }}
-              >
-                Favourites
-              </Text>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 12 }}>
+              <Text style={{ color: colors.textPrimary, fontWeight: "800", fontSize: 16 }}>Favourites</Text>
               <TouchableOpacity onPress={cancelFavEdit}>
-                <MaterialIcons
-                  name="close"
-                  size={22}
-                  color={colors.textSecondary}
-                />
+                <MaterialIcons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-
-            {/* Existing favourites */}
-            <Text
-              style={{
-                color: colors.textSecondary,
-                fontSize: 12,
-                marginTop: 8,
-                paddingHorizontal: 12,
-              }}
-            >
-              Your saved templates
-            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 8, paddingHorizontal: 12 }}>Your saved templates</Text>
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{
-                paddingVertical: 8,
-                paddingHorizontal: 12,
-              }}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingVertical: 8, paddingHorizontal: 12 }}
             >
               {favs.length === 0 ? (
-                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                  No favourites yet.
-                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>No favourites yet.</Text>
               ) : (
                 favs.map((t) => (
                   <View
@@ -1949,62 +1164,19 @@ const toggleFavoriteFromItem = async (item: any) => {
                       }}
                       style={{ marginRight: 8 }}
                     >
-                      <Text
-                        style={{
-                          color: colors.textPrimary,
-                          fontWeight: "700",
-                          fontSize: 13,
-                        }}
-                      >
-                        {t.name}
-                      </Text>
-                      <Text
-                        style={{ color: colors.textSecondary, fontSize: 11 }}
-                      >
-                        {t.type}
-                      </Text>
+                      <Text style={{ color: colors.textPrimary, fontWeight: "700", fontSize: 13 }}>{t.name}</Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{t.type}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => removeTemplate(t.id)}>
-                      <MaterialIcons
-                        name="close"
-                        size={16}
-                        color={colors.textSecondary}
-                      />
+                      <MaterialIcons name="close" size={16} color={colors.textSecondary} />
                     </TouchableOpacity>
                   </View>
                 ))
               )}
             </ScrollView>
-
-            {/* Divider */}
-            <View
-              style={{
-                height: 1,
-                backgroundColor: colors.border,
-                marginHorizontal: 12,
-                marginVertical: 6,
-              }}
-            />
-
-            {/* Primary action: Save current as favourite */}
+            <View style={{ height: 1, backgroundColor: colors.border, marginHorizontal: 12, marginVertical: 6 }} />
             <View style={{ paddingHorizontal: 12, paddingTop: 4 }}>
-              <TouchableOpacity
-                onPress={startFavoriteFromForm}
-                style={{
-                  alignSelf: "flex-start",
-                  paddingVertical: 10,
-                  paddingHorizontal: 14,
-                  borderRadius: 10,
-                  backgroundColor: colors.accent + "22",
-                  marginBottom: 8,
-                }}
-              >
-                <Text style={{ color: colors.accent, fontWeight: "700" }}>
-                  Save current as favourite
-                </Text>
-              </TouchableOpacity>
-
-              {/* Android inline editor (shown only if we fell back and have a pending template) */}
+              <CTA title="Save current as favourite" tone="accent" onPress={startFavoriteFromForm} />
               {!!pendingFav && (
                 <>
                   <TextInput
@@ -2019,39 +1191,14 @@ const toggleFavoriteFromItem = async (item: any) => {
                       padding: 10,
                       borderRadius: 10,
                       color: colors.textPrimary,
-                      marginBottom: 8,
+                      marginTop: 8,
+                      height: INPUT_H,
                     }}
                   />
-                  <View style={{ flexDirection: "row" }}>
-                    <TouchableOpacity
-                      onPress={confirmSaveFavorite}
-                      style={{
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: 10,
-                        backgroundColor: colors.success + "22",
-                        marginRight: 8,
-                      }}
-                    >
-                      <Text
-                        style={{ color: colors.success, fontWeight: "700" }}
-                      >
-                        Save Favourite
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={cancelFavEdit}
-                      style={{
-                        paddingVertical: 10,
-                        paddingHorizontal: 14,
-                        borderRadius: 10,
-                        backgroundColor: colors.error + "22",
-                      }}
-                    >
-                      <Text style={{ color: colors.error, fontWeight: "700" }}>
-                        Cancel
-                      </Text>
-                    </TouchableOpacity>
+                  <View style={{ flexDirection: "row", marginTop: 8 }}>
+                    <CTA title="Save Favourite" tone="success" onPress={confirmSaveFavorite} />
+                    <View style={{ width: 8 }} />
+                    <CTA title="Cancel" tone="error" onPress={cancelFavEdit} />
                   </View>
                 </>
               )}
@@ -2059,6 +1206,6 @@ const toggleFavoriteFromItem = async (item: any) => {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 }

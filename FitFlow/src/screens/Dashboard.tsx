@@ -1,5 +1,6 @@
 // === Dashboard.tsx ===
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
 import {
   addDays,
@@ -23,6 +24,7 @@ import {
 } from "react-native";
 import FastCelebrationCard from "../components/FastCelebrationCard";
 import { allInspirations, Inspiration } from "../constants/inspirations";
+import { useAuth } from "../hooks/useAuth";
 import {
   getEntryCount,
   getExercisesCompleted,
@@ -30,6 +32,7 @@ import {
   supabase,
 } from "../lib/api";
 import { useFastingState } from "../lib/fastingState";
+//import { loadProfile } from "../lib/storage";
 import { useTheme } from "../theme/theme";
 
 // ---- Simple, theme-aware weekly bars (no 3rd‑party chart) ----
@@ -115,6 +118,53 @@ const makeWeeklyBuckets = (raw: any[]): WeeklyPoint[] => {
   return buckets;
 };
 
+
+// // Derive a first name from various possible local profile shapes
+// const getLocalFirstName = (local: any): string => {
+//   if (!local || typeof local !== 'object') return '';
+//   const tryVals = [
+//     local?.name,
+//     local?.firstName,
+//     local?.first_name,
+//     local?.fullName,
+//     local?.full_name,
+//     local?.basics?.name,
+//     local?.profile?.name,
+//   ];
+//   for (const v of tryVals) {
+//     if (typeof v === 'string' && v.trim()) return v.trim().split(' ')[0];
+//   }
+//   const email = local?.email || local?.auth?.email;
+//   if (typeof email === 'string' && email.includes('@')) return email.split('@')[0];
+//   return '';
+// };
+
+const LS_PROFILE_KEY = 'userProfile';
+
+const getLocalProfile = async <T = any>(): Promise<T | null> => {
+  const raw = await AsyncStorage.getItem(LS_PROFILE_KEY);
+  return raw ? (JSON.parse(raw) as T) : null;
+};
+
+const getLocalFirstName = (local: any): string => {
+  if (!local || typeof local !== 'object') return '';
+  const tryVals = [
+    local?.name,
+    local?.firstName,
+    local?.first_name,
+    local?.fullName,
+    local?.full_name,
+    local?.basics?.name,
+    local?.profile?.name,
+  ];
+  for (const v of tryVals) {
+    if (typeof v === 'string' && v.trim()) return v.trim().split(' ')[0];
+  }
+  const email = local?.email || local?.auth?.email;
+  if (typeof email === 'string' && email.includes('@')) return email.split('@')[0];
+  return '';
+};
+
 const { width } = Dimensions.get("window");
 
 export default function Dashboard() {
@@ -137,7 +187,41 @@ export default function Dashboard() {
   const [streak, setStreak] = useState<number>(0);
   const fasting = useFastingState();
   const [weekEntries, setWeekEntries] = useState<any[]>([]);
+  const { setHasOnboarded } = useAuth();
   
+useEffect(() => {
+  console.log("[Dashboard] mounted"); 
+  console.log("[Dashboard] guest name from local profile ->", name);
+  try { console.log("[Dashboard] route?", (nav as any).getState?.()?.routes?.slice(-1)[0]?.name); } catch {}
+}, []);
+
+
+//   // DEV: Force reset handler (developer only)
+//   const devForceReset = async () => {
+//     try {
+//       // Clear local onboarding/profile keys
+//       await AsyncStorage.multiRemove([
+//         "userProfile",
+//         "hasOnboarded",
+//         "profileSource",
+//       ]);
+//     } catch {}
+
+//     try {
+//       // Best-effort sign out (ignore if not logged in)
+//       await supabase.auth.signOut();
+//     } catch {}
+//       setHasOnboarded(false);
+
+
+//     // Reset navigation back to Onboarding using the existing navigator
+//     nav.dispatch(
+//       CommonActions.reset({
+//         index: 0,
+//         routes: [{ name: "Onboarding" as never }],
+//       })
+//     );
+//   };
 
   // console.log("ChartData>>>", chartData);
   const isMiddayOnWeekEnd = (date: Date) => {
@@ -152,12 +236,52 @@ export default function Dashboard() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const { data } = await supabase
+
+      // --- GUEST: not signed in -> use local storage & defaults ---
+      if (!user?.id) {
+try {
+  const local = await getLocalProfile<any>();
+  try { (global as any).__fitflow_last_profile_cache = local; } catch {}
+  const userName = getLocalFirstName(local);
+  console.log('[Dashboard] guest local profile ->', local);
+  console.log('[Dashboard] resolved guest firstName ->', userName);
+  if (userName) setName(userName);
+} catch (e) {
+  console.log('[Dashboard] local profile read error', e);
+}
+        setTotalWorkouts(0);
+        setExercisesCompleted(0);
+        setLatestWorkout("—");
+        setChartData([]);
+        setWeekEntries([]);
+
+        const days = generateDateRange();
+        setWeekDays(days);
+
+        const today = new Date();
+        const todayInRange = days.find((d) => isSameDay(d, today));
+        const defaultDate = todayInRange || days[0];
+        setSelectedDate(defaultDate);
+
+        const index = days.findIndex((d) => isSameDay(d, defaultDate));
+        if (index !== -1) {
+          setTimeout(() => {
+            flatListRef.current?.scrollToIndex({ index, animated: true });
+          }, 300);
+        }
+
+        setHasLoggedToday(false);
+        setStreak(0);
+        return; // stop here in guest mode
+      }
+
+      // --- SIGNED IN: fetch from Supabase ---
+      const { data, error } = await supabase
         .from("profiles")
         .select("full_name")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
-      const userName = data?.full_name?.split(" ")[0] || "";
+      const userName = (!error && data?.full_name ? data.full_name : "").split(" ")[0] || "";
       setName(userName);
       setTotalWorkouts(await getEntryCount());
       setExercisesCompleted(await getExercisesCompleted());
@@ -189,12 +313,57 @@ export default function Dashboard() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const { data } = await supabase
+
+      if (!user?.id) {
+        try {
+          // 1) Try helper from higher-level storage util
+          const local = await loadProfile<any>();
+          try { (global as any).__fitflow_last_profile_cache = local; } catch {}
+          let userName = getLocalFirstName(local);
+
+          // 2) Fallback: read raw JSON from AsyncStorage if storage util shape differs
+          if (!userName) {
+            const raw = await AsyncStorage.getItem('userProfile');
+            if (raw) {
+              try {
+                const parsed = JSON.parse(raw);
+                try { (global as any).__fitflow_last_profile_cache = parsed; } catch {}
+                userName = getLocalFirstName(parsed);
+                console.log('[Dashboard] raw userProfile parsed ->', parsed);
+              } catch (e) {
+                console.log('[Dashboard] failed to parse raw userProfile', e);
+              }
+            }
+          }
+
+          console.log('[Dashboard] resolved guest firstName ->', userName);
+          if (userName) setName(userName);
+        } catch (e) {
+          console.log('[Dashboard] loadProfile error (focus)', e);
+        }
+
+        setHasLoggedToday(false);
+        setStreak(0);
+        setChartData([]);
+        setWeekEntries([]);
+
+        // Ensure week strip + selected date are initialized in guest mode too
+        const days = generateDateRange();
+        setWeekDays(days);
+        const today = new Date();
+        const todayInRange = days.find((d) => isSameDay(d, today));
+        const defaultDate = todayInRange || days[0];
+        setSelectedDate(defaultDate);
+
+        return; // no cloud refresh in guest mode
+      }
+
+      const { data, error } = await supabase
         .from("profiles")
         .select("full_name")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
-      const userName = data?.full_name?.split(" ")[0] || "";
+      const userName = (!error && data?.full_name ? data.full_name : "").split(" ")[0] || "";
       setName(userName);
       await refreshWeekData();
     });
@@ -202,9 +371,14 @@ export default function Dashboard() {
     return unsubscribe;
   }, [nav]);
 
-  useEffect(() => {
-    if (selectedDate) fetchDaySummary();
-  }, [selectedDate]);
+useEffect(() => {
+  // If for any reason selectedDate is still null but we have weekDays, set a default.
+  if (!selectedDate && weekDays.length > 0) {
+    const today = new Date();
+    const todayInRange = weekDays.find((d) => isSameDay(d, today));
+    setSelectedDate(todayInRange || weekDays[0]);
+  }
+}, [weekDays, selectedDate]);
 
   const fetchPersonalBests = async (userId: string, today: Date) => {
     const { data, error } = await supabase
@@ -454,13 +628,20 @@ export default function Dashboard() {
 
   const getTimeGreeting = () => {
     const hour = new Date().getHours();
-    const base =
-      hour < 12
-        ? "Good Morning"
-        : hour < 18
-        ? "Good Afternoon"
-        : "Good Evening";
-    return name ? `${base}, ${name}!` : `${base}.`;
+    const base = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
+    if (name) return `${base}, ${name}!`;
+    // Lightweight synchronous fallback label (does not set state)
+    // Tries to show something meaningful even before async name resolves
+    // NOTE: this won’t block render; real state still updates via effects
+    try {
+      // This is safe since it’s best-effort and won’t throw if not available
+      const _cache: any = (global as any).__fitflow_last_profile_cache;
+      if (_cache?.email && typeof _cache.email === 'string') {
+        const alias = _cache.email.split('@')[0];
+        if (alias) return `${base}, ${alias}!`;
+      }
+    } catch {}
+    return `${base}.`;
   };
 
   const handleDatePress = (date: Date) => setSelectedDate(date);
@@ -1229,6 +1410,18 @@ export default function Dashboard() {
         </TouchableOpacity>
       </View>
 
+{/* Debug banner (temporary) */}
+<View
+  style={[styles.debugBanner, { top: HEADER_HEIGHT + 8, zIndex: 200 }]}
+  pointerEvents="none"
+>
+  <Text style={styles.debugLine}>Dbg: mounted ✓</Text>
+  <Text style={styles.debugLine}>Name: {name || "—"}</Text>
+  <Text style={styles.debugLine}>
+    Selected: {selectedDate ? format(selectedDate, "EEE d") : "—"}
+  </Text>
+</View>
+
       {/* Scrollable Content */}
       <View style={{ flex: 1, marginTop: HEADER_HEIGHT + 10 }}>
         <ScrollView contentContainerStyle={[styles.container]}>
@@ -1437,6 +1630,18 @@ export default function Dashboard() {
       >
         <MaterialIcons name="add" size={28} color="#fff" />
       </TouchableOpacity>
+      {/* DEV-only Force Reset button */}
+      {/* {__DEV__ && (
+        <TouchableOpacity
+          style={[styles.devResetBtn, { zIndex: 200, bottom: 36 }]}
+          onPress={devForceReset}
+          accessibilityRole="button"
+          accessibilityLabel="Force reset onboarding"
+        >
+          <Text style={{ color: "#fff", fontWeight: "800", fontSize: 14 }}>RESET</Text>
+        </TouchableOpacity>
+      )} */}
+
     </View>
   );
 }
@@ -1552,6 +1757,19 @@ const styles = StyleSheet.create({
     shadowColor: "#000",
     shadowOpacity: 0.2,
   },
+  devResetBtn: {
+    position: "absolute",
+    left: 24,
+    bottom: 24,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: "#D32F2F",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
   streakWarning: {
     position: "absolute",
     top: 2,
@@ -1578,4 +1796,17 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderRadius: 999,
   },
+  debugBanner: {
+  position: "absolute",
+  top: 8,
+  right: 8,
+  backgroundColor: "rgba(0,0,0,0.55)",
+  borderRadius: 8,
+  paddingHorizontal: 8,
+  paddingVertical: 6,
+},
+debugLine: {
+  color: "#fff",
+  fontSize: 11,
+},
 });
