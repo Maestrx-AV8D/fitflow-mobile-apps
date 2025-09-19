@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { format, subDays } from 'date-fns'
 import Constants from 'expo-constants'
+import { UserProfile } from '../screens/Onboarding'
 
 // 1) initialize Supabase
 const SUPABASE_URL = Constants.expoConfig?.extra?.SUPABASE_URL as string
@@ -13,9 +14,6 @@ if (!match) throw new Error('Invalid SUPABASE_URL')
 const PROJECT_REF = match[1]
 
 // ————————————————————————————————————————————————————————————————————————————————
-
-
-
 export async function getCurrentUser() {
   const { data: { user }, error } = await supabase.auth.getUser()
   if (error) throw error
@@ -37,90 +35,228 @@ export async function signUp(email: string, password: string) {
   return data.user
 }
 
-export async function getProfile(): Promise<{
-  fullName: string
-  age: string
-  gender: string
-  height: string
-  weight: string
-  goals: {
-    goalType: string
-    targetValue: string
-    targetDate: string
-  }
-  is_premium: boolean
-} | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return null
+// export async function getProfile(): Promise<{
+//   fullName: string
+//   age: string
+//   gender: string
+//   height: string
+//   weight: string
+//   goals: {
+//     goalType: string
+//     targetValue: string
+//     targetDate: string
+//   }
+//   is_premium: boolean
+// } | null> {
+//   const {
+//     data: { user },
+//   } = await supabase.auth.getUser()
+//   if (!user) return null
+
+//   const { data, error } = await supabase
+//     .from('profiles')
+//     .select('full_name,age,gender,height_cm,current_weight_kg, goals, is_premium')
+//     .eq('user_id', user.id)
+//     .single()
+
+//   if (error || !data) return null
+
+//   return {
+//     fullName: data.full_name || '',
+//     age: data.age?.toString() || '',
+//     gender: data.gender || '',
+//     height: data.height_cm?.toString() || '',
+//     weight: data.current_weight_kg?.toString() || '',
+//     goals: data.goals ?? { goalType: '', targetValue: '', targetDate: '' },
+//     is_premium: data.is_premium ?? false
+//   }
+// }
+
+// export async function saveProfile(payload: {
+//   fullName: string
+//   age: string
+//   gender: string
+//   height: string
+//   weight: string
+//   goals: {
+//     goalType: string
+//     targetValue: string
+//     targetDate: string
+//   }
+// }): Promise<void> {
+//   const {
+//     data: { user },
+//   } = await supabase.auth.getUser()
+//   if (!user) throw new Error('Not signed in')
+
+//   const updates = {
+//     user_id: user.id,
+//     full_name: payload.fullName,
+//     age: Number(payload.age),
+//     gender: payload.gender,
+//     height_cm: Number(payload.height),
+//     current_weight_kg: Number(payload.weight),
+//     goals: payload.goals,
+//     update_at: new Date()
+//   }
+
+//   const { error } = await supabase
+//     .from('profiles')
+//     .upsert(updates, { onConflict: 'user_id' })
+
+//   if (error) throw error
+// }
+
+// export async function getUserName(): Promise<string> {
+//   const user = await getCurrentUser()
+//   if (!user) return ''
+//   const { data, error } = await supabase
+//     .from('profiles')
+//     .select('full_name')
+//     .eq('id', user.id)
+//     .single()
+//   if (error || !data) {
+//     return user.name || 'User'
+//   }
+//   return data.full_name || 'User'
+// }
+
+// Map onboarding profile → legacy payload (if needed elsewhere)
+export function toLegacyProfile(p: UserProfile) {
+  return {
+    fullName: p.name ?? '',
+    age: (p.ageYears ?? '') + '',
+    gender: p.sex ?? '',
+    height: (p.heightCm ?? '') + '',
+    weight: (p.weightKg ?? '') + '',
+    goals: {
+      goalType: (p.goals && p.goals[0]) || '',
+      targetValue: '',
+      targetDate: '',
+    },
+  };
+}
+
+// ➜ lib/api.ts
+
+// ————————————————— getProfile —————————————————
+export async function getProfile(): Promise<UserProfile | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
 
   const { data, error } = await supabase
     .from('profiles')
-    .select('full_name,age,gender,height_cm,current_weight_kg, goals, is_premium')
+    .select(`
+      full_name,
+      sex,
+      age_years,
+      age_range,
+      experience,
+      goals,
+      focus_parts,
+      diet_type,
+      activity_level,
+      units,
+      height_cm,
+      current_weight_kg,
+      target_weight_kg,
+      availability_days,
+      created_at
+    `)
     .eq('user_id', user.id)
-    .single()
+    .maybeSingle();
 
-  if (error || !data) return null
+  if (error || !data) return null;
 
-  return {
-    fullName: data.full_name || '',
-    age: data.age?.toString() || '',
-    gender: data.gender || '',
-    height: data.height_cm?.toString() || '',
-    weight: data.current_weight_kg?.toString() || '',
-    goals: data.goals ?? { goalType: '', targetValue: '', targetDate: '' },
-    is_premium: data.is_premium ?? false
-  }
+  // Narrow values to your unions; fall back to undefined if not valid
+  const ACTIVITY: Record<string, UserProfile['activityLevel']> = {
+    'Sedentary': 'Sedentary',
+    'Lightly active': 'Lightly active',
+    'Active': 'Active',
+    'Very active': 'Very active',
+  };
+
+  const UNITS: Record<string, UserProfile['units']> = {
+    metric: 'metric',
+    imperial: 'imperial',
+  };
+
+  const p: UserProfile = {
+    name: data.full_name ?? undefined,
+    sex: data.sex ?? undefined,
+    ageYears: typeof data.age_years === 'number' ? data.age_years : undefined,
+    ageRange: data.age_range ?? undefined,               // expect one of your AgeRange strings
+    experience: data.experience ?? undefined,            // 'Beginner' | 'Intermediate' | 'Advanced'
+    goals: Array.isArray(data.goals) ? data.goals : [],
+    focusParts: Array.isArray(data.focus_parts) ? data.focus_parts : [],
+    dietType: data.diet_type ?? undefined,               // 'Regular' | 'Vegetarian' | 'Keto' | 'Vegan' | 'Other'
+    activityLevel: ACTIVITY[data.activity_level as string] ?? undefined,
+    units: UNITS[(data.units as string)?.toLowerCase?.()] ?? undefined,
+    heightCm: data.height_cm == null ? undefined : Number(data.height_cm),
+    weightKg: data.current_weight_kg == null ? undefined : Number(data.current_weight_kg),
+    targetWeightKg: data.target_weight_kg == null ? undefined : Number(data.target_weight_kg),
+    availabilityDays: data.availability_days == null ? undefined : Number(data.availability_days),
+    createdAt: data.created_at ?? undefined,
+  };
+
+  return p;
 }
 
-export async function saveProfile(payload: {
-  fullName: string
-  age: string
-  gender: string
-  height: string
-  weight: string
-  goals: {
-    goalType: string
-    targetValue: string
-    targetDate: string
-  }
-}): Promise<void> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not signed in')
+// ————————————————— saveProfile —————————————————
+export async function saveProfile(profile: UserProfile): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+
+  // Trust only allowed values for enums
+  const validActivity = ['Sedentary','Lightly active','Active','Very active'] as const;
+  const activity = validActivity.includes(profile.activityLevel as any)
+    ? profile.activityLevel
+    : null;
+
+  const validUnits = ['metric','imperial'] as const;
+  const units = validUnits.includes(profile.units as any)
+    ? profile.units
+    : null;
 
   const updates = {
     user_id: user.id,
-    full_name: payload.fullName,
-    age: Number(payload.age),
-    gender: payload.gender,
-    height_cm: Number(payload.height),
-    current_weight_kg: Number(payload.weight),
-    goals: payload.goals,
-    update_at: new Date()
-  }
+    full_name: profile.name ?? null,
+    sex: profile.sex ?? null,                   // 'Male' | 'Female' | 'Other'
+    age_years: profile.ageYears ?? null,
+    age_range: profile.ageRange ?? null,        // '18–24', etc.
+    experience: profile.experience ?? null,     // 'Beginner' | 'Intermediate' | 'Advanced'
+    goals: profile.goals ?? [],                 // jsonb
+    focus_parts: profile.focusParts ?? [],      // text[]
+    diet_type: profile.dietType ?? null,        // text
+    activity_level: activity,                   // text
+    units,                                      // text ('metric' | 'imperial')
+    height_cm: profile.heightCm ?? null,        // numeric
+    current_weight_kg: profile.weightKg ?? null,
+    target_weight_kg: profile.targetWeightKg ?? null,
+    availability_days: profile.availabilityDays ?? null,
+    created_at: profile.createdAt ?? null,      // allow onboarding-created timestamp, else DB default
+    updated_at: new Date().toISOString(),
+  };
 
   const { error } = await supabase
     .from('profiles')
-    .upsert(updates, { onConflict: 'user_id' })
+    .upsert(updates, { onConflict: 'user_id' });
 
-  if (error) throw error
+  if (error) throw error;
 }
 
+// ————————————————— getUserName —————————————————
 export async function getUserName(): Promise<string> {
-  const user = await getCurrentUser()
-  if (!user) return ''
-  const { data, error } = await supabase
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return '';
+
+  const { data } = await supabase
     .from('profiles')
     .select('full_name')
-    .eq('id', user.id)
-    .single()
-  if (error || !data) {
-    return user.name || 'User'
-  }
-  return data.full_name || 'User'
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  return (data?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User');
 }
 
 // ————————————————————————————————————————————————————————————————————————————————

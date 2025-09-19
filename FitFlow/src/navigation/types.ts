@@ -24,4 +24,6 @@ export type RootStackParamList = {
   Main: NavigatorScreenParams<RootTabParamList>;
   SignIn: undefined;
   Onboarding: undefined;
+  Upgrade: undefined;
+  Premium: undefined;
 };

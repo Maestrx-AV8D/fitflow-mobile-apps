@@ -5,13 +5,14 @@ import {
   NavigationContainer,
 } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import React from "react";
 import { StyleSheet, useColorScheme } from "react-native";
 
 import FastingCompletionObserver from "../components/FastingCompletionObserver";
 import { useAuth } from "../hooks/useAuth";
 import Onboarding from "../screens/Onboarding";
+import Paywall from "../screens/Premium";
 import SignIn from "../screens/SignIn";
+import Upgrade from "../screens/Upgrade";
 import MainTabs from "./MainTabs";
 import { navigationRef } from "./navigationRef";
 import { RootStackParamList } from "./types";
@@ -35,8 +36,15 @@ export default function AppNavigator() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user ? (
           <Stack.Screen name="Main" component={MainTabs} />
-        ) : !hasOnboarded ? (
+        ) : hasOnboarded ? (
+          <>
           <Stack.Screen name="Onboarding" component={Onboarding} />
+          <Stack.Screen name="Upgrade" component={Upgrade} />
+          <Stack.Screen name="Main" component={MainTabs} />
+          <Stack.Screen name="SignIn" component={SignIn} />
+          <Stack.Screen name="Premium" component={Paywall} />
+          </>
+
         ) : (
          <Stack.Screen name="Main" component={MainTabs} />
         )}

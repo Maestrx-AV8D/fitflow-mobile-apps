@@ -1,7 +1,6 @@
 // App.tsx
 import * as Notifications from 'expo-notifications';
-import React from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import 'react-native-url-polyfill/auto';
 
 import {
@@ -13,8 +12,22 @@ import {
   useFonts,
 } from '@expo-google-fonts/inter';
 
+import Purchases from 'react-native-purchases';
 import { AuthProvider } from './src/hooks/useAuth';
+import { EntitlementsProvider } from './src/lib/entitlements';
+import { StorageProvider } from './src/lib/storage';
 import AppNavigator from './src/navigation/AppNavigator';
+
+const RC_IOS_KEY = "appl_xxx";
+const RC_ANDROID_KEY = "goog_xxx";
+
+export async function initPurchases(userId?: string) {
+  await Purchases.configure({
+    apiKey: Platform.select({ ios: RC_IOS_KEY, android: RC_ANDROID_KEY })!,
+    appUserID: userId, // use your Supabase user.id
+  });
+}
+
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -45,7 +58,11 @@ export default function App() {
 
   return (
     <AuthProvider>
+      <EntitlementsProvider>
+        <StorageProvider>
       <AppNavigator />
+      </StorageProvider>
+      </EntitlementsProvider>
     </AuthProvider>
   );
 }
