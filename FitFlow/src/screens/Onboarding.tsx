@@ -26,7 +26,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "../hooks/useAuth";
-import { saveProfile } from "../lib/api";
 import { useTheme } from "../theme/theme";
 
 // ────────────────────────────────────────────────────────────────────────────────
@@ -284,19 +283,16 @@ export default function Onboarding() {
     const profile: UserProfile = buildProfile();
 
     try {
-      await saveProfile(profile);
       await AsyncStorage.multiSet([
         ["profile", JSON.stringify(profile)],
         ["onboarding_done", "true"],
       ]);
-      setHasOnboarded(true);
       // Everyone goes to Upgrade next
       navigation.reset({
         index: 0,
         routes: [{ name: ROUTES.UPGRADE }], // make sure this route name exists
       });
     } catch (e) {
-      setHasOnboarded(false);
       console.warn("Error saving profile", e);
     }
     // no finally needed since we navigate away
